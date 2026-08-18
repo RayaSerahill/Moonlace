@@ -1,0 +1,12 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Moonlace.App/Moonlace.App.csproj" />
+    <Project Path="src/Moonlace.Core/Moonlace.Core.csproj" />
+    <Project Path="src/Moonlace.GameData/Moonlace.GameData.csproj" />
+    <Project Path="src/Moonlace.Rendering/Moonlace.Rendering.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Moonlace.Core.Tests/Moonlace.Core.Tests.csproj" />
+    <Project Path="tests/Moonlace.GameData.Tests/Moonlace.GameData.Tests.csproj" />
+  </Folder>
+</Solution>

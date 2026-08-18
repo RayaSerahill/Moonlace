@@ -1,0 +1,122 @@
+<Application xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="Moonlace.App.App"
+             xmlns:local="using:Moonlace.App"
+             RequestedThemeVariant="Dark">
+
+    <Application.DataTemplates>
+        <local:ViewLocator />
+    </Application.DataTemplates>
+
+    <Application.Resources>
+        <!-- Fluent's system accent becomes Moonlace pink so selection,
+             focus rings and progress bars follow the theme. -->
+        <Color x:Key="SystemAccentColor">#F2A9C4</Color>
+        <Color x:Key="SystemAccentColorDark1">#DE93AF</Color>
+        <Color x:Key="SystemAccentColorDark2">#C97F9C</Color>
+        <Color x:Key="SystemAccentColorDark3">#B36B88</Color>
+        <Color x:Key="SystemAccentColorLight1">#F5B8CE</Color>
+        <Color x:Key="SystemAccentColorLight2">#F8C7D8</Color>
+        <Color x:Key="SystemAccentColorLight3">#FBD6E2</Color>
+
+        <!-- Moonlace palette: deep near-black, muted charcoal, soft pink, subtle lilac. -->
+        <Color x:Key="MoonBackground">#141216</Color>
+        <Color x:Key="MoonPanel">#1D1A21</Color>
+        <Color x:Key="MoonPanelHover">#26222C</Color>
+        <Color x:Key="MoonBorder">#2E2933</Color>
+        <Color x:Key="MoonAccent">#F2A9C4</Color>
+        <Color x:Key="MoonAccentDim">#B87F97</Color>
+        <Color x:Key="MoonLilac">#B9A8D9</Color>
+        <Color x:Key="MoonText">#EAE6EE</Color>
+        <Color x:Key="MoonTextDim">#9B93A5</Color>
+
+        <SolidColorBrush x:Key="MoonBackgroundBrush" Color="{StaticResource MoonBackground}" />
+        <SolidColorBrush x:Key="MoonPanelBrush" Color="{StaticResource MoonPanel}" />
+        <SolidColorBrush x:Key="MoonPanelHoverBrush" Color="{StaticResource MoonPanelHover}" />
+        <SolidColorBrush x:Key="MoonBorderBrush" Color="{StaticResource MoonBorder}" />
+        <SolidColorBrush x:Key="MoonAccentBrush" Color="{StaticResource MoonAccent}" />
+        <SolidColorBrush x:Key="MoonAccentDimBrush" Color="{StaticResource MoonAccentDim}" />
+        <SolidColorBrush x:Key="MoonLilacBrush" Color="{StaticResource MoonLilac}" />
+        <SolidColorBrush x:Key="MoonTextBrush" Color="{StaticResource MoonText}" />
+        <SolidColorBrush x:Key="MoonTextDimBrush" Color="{StaticResource MoonTextDim}" />
+    </Application.Resources>
+
+    <Application.Styles>
+        <FluentTheme />
+
+        <Style Selector="Window">
+            <Setter Property="Background" Value="{StaticResource MoonBackgroundBrush}" />
+            <Setter Property="FontFamily" Value="fonts:Inter#Inter" />
+        </Style>
+
+        <Style Selector="TextBlock">
+            <Setter Property="Foreground" Value="{StaticResource MoonTextBrush}" />
+        </Style>
+
+        <Style Selector="TextBlock.dim">
+            <Setter Property="Foreground" Value="{StaticResource MoonTextDimBrush}" />
+        </Style>
+
+        <Style Selector="TextBlock.title">
+            <Setter Property="FontSize" Value="22" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="Foreground" Value="{StaticResource MoonAccentBrush}" />
+        </Style>
+
+        <Style Selector="TextBox">
+            <Setter Property="Background" Value="{StaticResource MoonPanelBrush}" />
+            <Setter Property="BorderBrush" Value="{StaticResource MoonBorderBrush}" />
+            <Setter Property="CornerRadius" Value="8" />
+            <Setter Property="Padding" Value="10,7" />
+        </Style>
+
+        <Style Selector="Button">
+            <Setter Property="Background" Value="{StaticResource MoonPanelHoverBrush}" />
+            <Setter Property="Foreground" Value="{StaticResource MoonTextBrush}" />
+            <Setter Property="BorderBrush" Value="{StaticResource MoonBorderBrush}" />
+            <Setter Property="CornerRadius" Value="8" />
+            <Setter Property="Padding" Value="14,7" />
+        </Style>
+
+        <Style Selector="Button.primary">
+            <Setter Property="Background" Value="{StaticResource MoonAccentDimBrush}" />
+            <Setter Property="Foreground" Value="#221A1F" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+        </Style>
+
+        <!-- Chromeless row-filling button for spoiler rows in the item tree;
+             the ListBoxItem underneath provides the hover feedback. -->
+        <Style Selector="Button.treeToggle">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="CornerRadius" Value="0" />
+        </Style>
+
+        <Style Selector="Button.treeToggle:pointerover /template/ ContentPresenter">
+            <Setter Property="Background" Value="Transparent" />
+        </Style>
+
+        <Style Selector="Button.treeToggle:pressed /template/ ContentPresenter">
+            <Setter Property="Background" Value="Transparent" />
+        </Style>
+
+        <Style Selector="Button.primary:pointerover /template/ ContentPresenter">
+            <Setter Property="Background" Value="{StaticResource MoonAccentBrush}" />
+        </Style>
+
+        <Style Selector="ListBox">
+            <Setter Property="Background" Value="Transparent" />
+        </Style>
+
+        <Style Selector="ListBoxItem">
+            <Setter Property="CornerRadius" Value="7" />
+            <Setter Property="Padding" Value="10,6" />
+            <Setter Property="Margin" Value="2,1" />
+        </Style>
+
+        <Style Selector="ProgressBar">
+            <Setter Property="Foreground" Value="{StaticResource MoonAccentBrush}" />
+        </Style>
+    </Application.Styles>
+</Application>

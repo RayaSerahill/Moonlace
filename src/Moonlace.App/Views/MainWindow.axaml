@@ -1,0 +1,259 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:Moonlace.App.ViewModels"
+        x:Class="Moonlace.App.Views.MainWindow"
+        x:DataType="vm:MainWindowViewModel"
+        Title="Moonlace"
+        Width="1200" Height="760"
+        MinWidth="820" MinHeight="520"
+        Background="{StaticResource MoonBackgroundBrush}">
+
+    <Panel>
+        <DockPanel>
+            <!-- ═══ Top bar ═══ -->
+            <Border DockPanel.Dock="Top" Background="{StaticResource MoonPanelBrush}"
+                    BorderBrush="{StaticResource MoonBorderBrush}" BorderThickness="0,0,0,1">
+                <DockPanel>
+                    <Menu DockPanel.Dock="Left" Padding="4,2">
+                        <MenuItem Header="Files" FontSize="13">
+                            <MenuItem Header="Upgrade to DT…"
+                                      Command="{Binding Files.UpgradeToDtCommand}" />
+                        </MenuItem>
+                        <MenuItem Header="Penumbra" FontSize="13">
+                            <MenuItem Header="Live edit…"
+                                      Command="{Binding Penumbra.StartLiveEditCommand}" />
+                            <MenuItem Header="Change options…"
+                                      Command="{Binding Penumbra.ChangeOptionsCommand}"
+                                      IsEnabled="{Binding Penumbra.IsLinked}" />
+                            <MenuItem Header="New option or group…"
+                                      Command="{Binding Penumbra.OpenNewOptionPanelCommand}"
+                                      IsEnabled="{Binding Penumbra.IsLinked}" />
+                            <MenuItem Header="Stop capturing into option"
+                                      Command="{Binding Penumbra.StopEditTargetCommand}"
+                                      IsEnabled="{Binding Penumbra.EditTargetLabel, Converter={x:Static ObjectConverters.IsNotNull}}" />
+                            <MenuItem Header="Revert changes"
+                                      Command="{Binding Penumbra.RequestRevertCommand}"
+                                      IsEnabled="{Binding Penumbra.CanRevert}" />
+                            <Separator />
+                            <MenuItem Header="Unlink"
+                                      Command="{Binding Penumbra.UnlinkCommand}"
+                                      IsEnabled="{Binding Penumbra.IsLinked}" />
+                        </MenuItem>
+                    </Menu>
+
+                    <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="10"
+                                Margin="0,0,14,0" VerticalAlignment="Center">
+                        <TextBlock FontSize="12" Foreground="#E89B9B" VerticalAlignment="Center"
+                                   Text="{Binding Files.ErrorText}" TextTrimming="CharacterEllipsis" MaxWidth="420"
+                                   IsVisible="{Binding Files.ErrorText, Converter={x:Static ObjectConverters.IsNotNull}}" />
+                        <TextBlock FontSize="12" Foreground="#E89B9B" VerticalAlignment="Center"
+                                   Text="{Binding Penumbra.ErrorText}" TextTrimming="CharacterEllipsis" MaxWidth="420"
+                                   IsVisible="{Binding Penumbra.ErrorText, Converter={x:Static ObjectConverters.IsNotNull}}" />
+                        <Border Background="{StaticResource MoonAccentDimBrush}" CornerRadius="999" Padding="10,3"
+                                IsVisible="{Binding Penumbra.IsLinked}">
+                            <TextBlock FontSize="11" FontWeight="SemiBold" Foreground="#221A1F"
+                                       Text="{Binding Penumbra.LinkStatus}" TextTrimming="CharacterEllipsis" MaxWidth="420" />
+                        </Border>
+                    </StackPanel>
+
+                    <Panel />
+                </DockPanel>
+            </Border>
+
+            <ContentControl Content="{Binding CurrentView}" />
+        </DockPanel>
+
+        <!-- Game data initialization overlay -->
+        <Border Background="#C0141216" IsVisible="{Binding IsInitializing}">
+            <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Spacing="14">
+                <TextBlock Classes="title" Text="Moonlace" HorizontalAlignment="Center" />
+                <ProgressBar IsIndeterminate="True" Width="220" />
+                <TextBlock Classes="dim" Text="Reading game data…" HorizontalAlignment="Center" />
+            </StackPanel>
+        </Border>
+
+        <!-- Penumbra option picker -->
+        <Border Background="#C0141216" IsVisible="{Binding Penumbra.IsOptionsPanelOpen}">
+            <Border VerticalAlignment="Center" HorizontalAlignment="Center"
+                    Background="{StaticResource MoonPanelBrush}"
+                    BorderBrush="{StaticResource MoonBorderBrush}" BorderThickness="1"
+                    CornerRadius="12" Padding="24,20" Width="460" MaxHeight="560">
+                <DockPanel>
+                    <TextBlock DockPanel.Dock="Top" Classes="title" FontSize="16"
+                               Text="{Binding Penumbra.OptionsPanelTitle}" />
+                    <TextBlock DockPanel.Dock="Top" Classes="dim" FontSize="12" TextWrapping="Wrap"
+                               Margin="0,6,0,12"
+                               Text="Choose which of the mod's options Moonlace edits through. You can change this later from the Penumbra menu — files already edited keep their edits." />
+
+                    <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" Spacing="8"
+                                HorizontalAlignment="Right" Margin="0,14,0,0">
+                        <Button Content="Cancel" Command="{Binding Penumbra.CancelOptionsCommand}" />
+                        <Button Classes="primary" Content="Apply" Command="{Binding Penumbra.ApplyOptionsCommand}" />
+                    </StackPanel>
+
+                    <!-- Where edits land -->
+                    <StackPanel DockPanel.Dock="Bottom" Spacing="6" Margin="0,12,0,0">
+                        <TextBlock Text="Capture edits in" FontWeight="SemiBold" FontSize="13" />
+                        <TextBlock Classes="dim" FontSize="11" TextWrapping="Wrap"
+                                   Text="An option only stores what you edit while it is targeted; everything else keeps coming from the mod's always-active default files." />
+                        <ComboBox HorizontalAlignment="Stretch" FontSize="12"
+                                  ItemsSource="{Binding Penumbra.EditTargets}"
+                                  SelectedItem="{Binding Penumbra.SelectedEditTarget}">
+                            <ComboBox.ItemTemplate>
+                                <DataTemplate x:DataType="vm:EditTargetChoice">
+                                    <TextBlock Text="{Binding Label}" FontSize="12" />
+                                </DataTemplate>
+                            </ComboBox.ItemTemplate>
+                        </ComboBox>
+                    </StackPanel>
+
+                    <TextBlock DockPanel.Dock="Bottom" FontSize="12" Foreground="#E89B9B" TextWrapping="Wrap"
+                               Text="{Binding Penumbra.ErrorText}"
+                               IsVisible="{Binding Penumbra.ErrorText, Converter={x:Static ObjectConverters.IsNotNull}}" />
+
+                    <ScrollViewer>
+                        <ItemsControl ItemsSource="{Binding Penumbra.OptionGroups}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate x:DataType="vm:PenumbraGroupViewModel">
+                                    <StackPanel Spacing="6" Margin="0,0,0,14">
+                                        <TextBlock Text="{Binding Name}" FontWeight="SemiBold" FontSize="13" />
+                                        <ComboBox HorizontalAlignment="Stretch" FontSize="12"
+                                                  IsVisible="{Binding IsSingle}"
+                                                  ItemsSource="{Binding Options}"
+                                                  SelectedItem="{Binding SelectedOption}">
+                                            <ComboBox.ItemTemplate>
+                                                <DataTemplate x:DataType="vm:PenumbraOptionChoiceViewModel">
+                                                    <TextBlock Text="{Binding Name}" FontSize="12" />
+                                                </DataTemplate>
+                                            </ComboBox.ItemTemplate>
+                                        </ComboBox>
+                                        <ItemsControl IsVisible="{Binding IsMulti}" ItemsSource="{Binding Options}">
+                                            <ItemsControl.ItemTemplate>
+                                                <DataTemplate x:DataType="vm:PenumbraOptionChoiceViewModel">
+                                                    <CheckBox FontSize="12" IsChecked="{Binding IsSelected}"
+                                                              Content="{Binding Name}" />
+                                                </DataTemplate>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
+                                    </StackPanel>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </ScrollViewer>
+                </DockPanel>
+            </Border>
+        </Border>
+
+        <!-- New option / group -->
+        <Border Background="#C0141216" IsVisible="{Binding Penumbra.IsNewOptionPanelOpen}">
+            <Border VerticalAlignment="Center" HorizontalAlignment="Center"
+                    Background="{StaticResource MoonPanelBrush}"
+                    BorderBrush="{StaticResource MoonBorderBrush}" BorderThickness="1"
+                    CornerRadius="12" Padding="24,20" Width="440">
+                <StackPanel Spacing="10">
+                    <TextBlock Classes="title" FontSize="16" Text="New option" />
+                    <TextBlock Classes="dim" FontSize="12" TextWrapping="Wrap"
+                               Text="The option starts empty and becomes the edit target: only assets you edit from now on are stored in it. Everything else keeps coming from the mod's always-active default files — the option does not need to duplicate them." />
+
+                    <CheckBox Content="Create a new group" FontSize="12"
+                              IsChecked="{Binding Penumbra.CreateNewGroup}"
+                              IsEnabled="{Binding Penumbra.HasExistingGroups}" />
+
+                    <ComboBox HorizontalAlignment="Stretch" FontSize="12"
+                              IsVisible="{Binding !Penumbra.CreateNewGroup}"
+                              ItemsSource="{Binding Penumbra.ExistingGroups}"
+                              SelectedItem="{Binding Penumbra.SelectedExistingGroup}" />
+
+                    <StackPanel Spacing="8" IsVisible="{Binding Penumbra.CreateNewGroup}">
+                        <TextBox Watermark="Group name" Text="{Binding Penumbra.NewGroupName}" />
+                        <CheckBox Content="Multi group (any combination can be enabled)" FontSize="12"
+                                  IsChecked="{Binding Penumbra.NewGroupIsMulti}" />
+                        <CheckBox Content="Start with an empty “Default” option (recommended)" FontSize="12"
+                                  IsChecked="{Binding Penumbra.AddDefaultFirstOption}"
+                                  IsVisible="{Binding !Penumbra.NewGroupIsMulti}" />
+                    </StackPanel>
+
+                    <TextBox Watermark="Option name" Text="{Binding Penumbra.NewOptionName}" />
+
+                    <TextBlock FontSize="12" Foreground="#E89B9B" TextWrapping="Wrap"
+                               Text="{Binding Penumbra.ErrorText}"
+                               IsVisible="{Binding Penumbra.ErrorText, Converter={x:Static ObjectConverters.IsNotNull}}" />
+
+                    <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Right">
+                        <Button Content="Cancel" Command="{Binding Penumbra.CancelNewOptionCommand}" />
+                        <Button Classes="primary" Content="Create" Command="{Binding Penumbra.CreateOptionCommand}" />
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+        </Border>
+
+        <!-- Upgrade to DT: confirmation -->
+        <Border Background="#C0141216" IsVisible="{Binding Files.IsConfirmOpen}">
+            <Border VerticalAlignment="Center" HorizontalAlignment="Center"
+                    Background="{StaticResource MoonPanelBrush}"
+                    BorderBrush="{StaticResource MoonBorderBrush}" BorderThickness="1"
+                    CornerRadius="12" Padding="24,20" Width="460">
+                <StackPanel Spacing="12">
+                    <TextBlock Classes="title" FontSize="16" Text="Upgrade to Dawntrail" />
+                    <TextBlock FontSize="13" TextWrapping="Wrap" Text="{Binding Files.ConfirmModName, StringFormat=Upgrade “{0}”?}" />
+                    <TextBlock Classes="dim" FontSize="12" TextWrapping="Wrap"
+                               Text="A new upgraded .pmp is written — the selected modpack itself is not touched. Legacy (Endwalker) gear materials are converted to Dawntrail formats: materials become characterlegacy with 32-row color tables, index textures are generated from the old normal maps, and mask/normal channels are moved. Skin, hair and already-current materials are left alone; .meta/.rgsp metadata entries are not carried over." />
+                    <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Right">
+                        <Button Content="Cancel" Command="{Binding Files.CancelUpgradeCommand}" />
+                        <Button Classes="primary" Content="Choose output…" Command="{Binding Files.ConfirmUpgradeCommand}" />
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+        </Border>
+
+        <!-- Upgrade to DT: busy -->
+        <Border Background="#C0141216" IsVisible="{Binding Files.IsBusy}">
+            <Border VerticalAlignment="Center" HorizontalAlignment="Center"
+                    Background="{StaticResource MoonPanelBrush}" CornerRadius="999" Padding="20,10">
+                <StackPanel Orientation="Horizontal" Spacing="10">
+                    <ProgressBar IsIndeterminate="True" Width="120" Height="4" />
+                    <TextBlock Classes="dim" Text="Upgrading mod…" FontSize="12" />
+                </StackPanel>
+            </Border>
+        </Border>
+
+        <!-- Upgrade to DT: summary -->
+        <Border Background="#C0141216" IsVisible="{Binding Files.IsSummaryOpen}">
+            <Border VerticalAlignment="Center" HorizontalAlignment="Center"
+                    Background="{StaticResource MoonPanelBrush}"
+                    BorderBrush="{StaticResource MoonBorderBrush}" BorderThickness="1"
+                    CornerRadius="12" Padding="24,20" Width="480" MaxHeight="480">
+                <DockPanel>
+                    <TextBlock DockPanel.Dock="Top" Classes="title" FontSize="16" Text="{Binding Files.SummaryTitle}" />
+                    <TextBlock DockPanel.Dock="Top" FontSize="13" TextWrapping="Wrap" Margin="0,10,0,0"
+                               Text="{Binding Files.SummaryText}" />
+                    <Button DockPanel.Dock="Bottom" Classes="primary" Content="Close" HorizontalAlignment="Right"
+                            Margin="0,14,0,0" Command="{Binding Files.CloseSummaryCommand}" />
+                    <ScrollViewer Margin="0,8,0,0"
+                                  IsVisible="{Binding Files.WarningsText, Converter={x:Static ObjectConverters.IsNotNull}}">
+                        <TextBlock FontSize="12" Foreground="#E8C89B" TextWrapping="Wrap"
+                                   Text="{Binding Files.WarningsText}" />
+                    </ScrollViewer>
+                </DockPanel>
+            </Border>
+        </Border>
+
+        <!-- Revert confirmation -->
+        <Border Background="#C0141216" IsVisible="{Binding Penumbra.IsConfirmingRevert}">
+            <Border VerticalAlignment="Center" HorizontalAlignment="Center"
+                    Background="{StaticResource MoonPanelBrush}"
+                    BorderBrush="{StaticResource MoonBorderBrush}" BorderThickness="1"
+                    CornerRadius="12" Padding="24,20" Width="420">
+                <StackPanel Spacing="12">
+                    <TextBlock Classes="title" FontSize="16" Text="Revert live edits?" />
+                    <TextBlock Classes="dim" FontSize="12" TextWrapping="Wrap"
+                               Text="Every file changed during this live-edit run is restored from its backup, and files Moonlace added to the mod are removed. The mod returns to the state it was in before editing." />
+                    <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Right">
+                        <Button Content="Keep edits" Command="{Binding Penumbra.CancelRevertCommand}" />
+                        <Button Classes="primary" Content="Revert" Command="{Binding Penumbra.ConfirmRevertCommand}" />
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+        </Border>
+    </Panel>
+</Window>

@@ -1,0 +1,31 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:Moonlace.App.ViewModels"
+             x:Class="Moonlace.App.Views.SetupView"
+             x:DataType="vm:SetupViewModel">
+
+    <Border MaxWidth="560" VerticalAlignment="Center" HorizontalAlignment="Stretch"
+            Background="{StaticResource MoonPanelBrush}"
+            BorderBrush="{StaticResource MoonBorderBrush}" BorderThickness="1"
+            CornerRadius="14" Padding="32,28" Margin="24">
+        <StackPanel Spacing="18">
+            <TextBlock Classes="title" Text="Moonlace" />
+            <TextBlock Classes="dim" TextWrapping="Wrap"
+                       Text="Final Fantasy XIV installation not configured. Choose the game's installation directory to continue." />
+
+            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="10">
+                <TextBox Grid.Column="0"
+                         Text="{Binding GamePath}"
+                         Watermark="/path/to/FINAL FANTASY XIV - A Realm Reborn" />
+                <Button Grid.Column="1" Content="Browse…" Command="{Binding BrowseCommand}" />
+            </Grid>
+
+            <TextBlock Text="{Binding ErrorMessage}"
+                       IsVisible="{Binding ErrorMessage, Converter={x:Static ObjectConverters.IsNotNull}}"
+                       Foreground="#E89B9B" TextWrapping="Wrap" />
+
+            <Button Classes="primary" Content="Continue" HorizontalAlignment="Right"
+                    Command="{Binding ContinueCommand}" />
+        </StackPanel>
+    </Border>
+</UserControl>

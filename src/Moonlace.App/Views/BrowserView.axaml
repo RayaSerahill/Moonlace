@@ -1,0 +1,424 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:Moonlace.App.ViewModels"
+             xmlns:controls="using:Moonlace.App.Controls"
+             xmlns:core="using:Moonlace.Core.Models"
+             x:Class="Moonlace.App.Views.BrowserView"
+             x:DataType="vm:BrowserViewModel">
+
+    <Grid RowDefinitions="*,Auto">
+
+        <Grid Grid.Row="0" ColumnDefinitions="290,1,430,1,*">
+
+            <!-- ═══ Column 1: item browser ═══ -->
+            <Grid Grid.Column="0" RowDefinitions="Auto,*" Margin="12,12,6,6">
+                <TextBox Grid.Row="0" Margin="0,0,0,10"
+                         Text="{Binding SearchText}"
+                         Watermark="Search equipment…" />
+
+                <Border Grid.Row="1" Background="{StaticResource MoonPanelBrush}"
+                        BorderBrush="{StaticResource MoonBorderBrush}" BorderThickness="1"
+                        CornerRadius="10">
+                    <Panel>
+                        <ListBox ItemsSource="{Binding VisibleNodes}"
+                                 SelectedItem="{Binding SelectedNode}"
+                                 Margin="4">
+                            <ListBox.DataTemplates>
+                                <!-- Category / subcategory spoiler rows. The whole row is a
+                                     transparent button: it swallows the click, so the ListBox
+                                     never treats headers as a selection. -->
+                                <DataTemplate DataType="vm:CategoryNode">
+                                    <Button Classes="treeToggle" HorizontalAlignment="Stretch"
+                                            HorizontalContentAlignment="Left"
+                                            Command="{Binding $parent[ListBox].((vm:BrowserViewModel)DataContext).ToggleCategoryCommand}"
+                                            CommandParameter="{Binding}">
+                                        <StackPanel Orientation="Horizontal" Spacing="7" Margin="{Binding Indent}">
+                                            <TextBlock Classes="dim" FontSize="10" VerticalAlignment="Center"
+                                                       Text="▶" IsVisible="{Binding !IsExpanded}" />
+                                            <TextBlock Classes="dim" FontSize="10" VerticalAlignment="Center"
+                                                       Text="▼" IsVisible="{Binding IsExpanded}" />
+                                            <TextBlock Text="{Binding Label}" FontWeight="SemiBold"
+                                                       VerticalAlignment="Center" />
+                                            <TextBlock Classes="dim" FontSize="11" VerticalAlignment="Center"
+                                                       Text="{Binding CountLabel}" />
+                                        </StackPanel>
+                                    </Button>
+                                </DataTemplate>
+
+                                <!-- Item rows -->
+                                <DataTemplate DataType="vm:ItemNode">
+                                    <StackPanel Orientation="Vertical" Spacing="1" Margin="26,0,0,0">
+                                        <TextBlock Text="{Binding Name}" TextTrimming="CharacterEllipsis" />
+                                        <TextBlock Classes="dim" FontSize="11" Text="{Binding SlotLabel}" />
+                                    </StackPanel>
+                                </DataTemplate>
+                            </ListBox.DataTemplates>
+                        </ListBox>
+
+                        <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center"
+                                    Spacing="10" IsVisible="{Binding IsLoadingItems}">
+                            <ProgressBar IsIndeterminate="True" Width="140" />
+                            <TextBlock Classes="dim" Text="Loading equipment…" HorizontalAlignment="Center" />
+                        </StackPanel>
+                    </Panel>
+                </Border>
+            </Grid>
+
+            <Rectangle Grid.Column="1" Fill="{StaticResource MoonBorderBrush}" Margin="0,16" />
+
+            <!-- ═══ Column 2: editing tabs, full height ═══ -->
+            <Border Grid.Column="2" Margin="6,12,6,6"
+                    Background="{StaticResource MoonPanelBrush}"
+                    BorderBrush="{StaticResource MoonBorderBrush}" BorderThickness="1"
+                    CornerRadius="10">
+                <Panel>
+                    <TextBlock Classes="dim" Text="Select an item to edit it"
+                               VerticalAlignment="Center" HorizontalAlignment="Center"
+                               IsVisible="{Binding !Editor.HasItem}" />
+
+                    <Grid RowDefinitions="Auto,*,Auto" IsVisible="{Binding Editor.HasItem}">
+
+                        <!-- Model version (race variant) selector -->
+                        <Border Grid.Row="0" BorderBrush="{StaticResource MoonBorderBrush}" BorderThickness="0,0,0,1"
+                                Padding="12,8" IsVisible="{Binding Editor.HasMultipleVersions}">
+                            <Grid ColumnDefinitions="Auto,*" ColumnSpacing="10">
+                                <TextBlock Grid.Column="0" Classes="dim" Text="Model version" FontSize="12"
+                                           VerticalAlignment="Center" />
+                                <ComboBox Grid.Column="1" FontSize="12" HorizontalAlignment="Stretch"
+                                          ItemsSource="{Binding Editor.ModelVersions}"
+                                          SelectedItem="{Binding Editor.SelectedVersion}">
+                                    <ComboBox.ItemTemplate>
+                                        <DataTemplate>
+                                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                                <TextBlock Text="{Binding Label}" FontSize="12" />
+                                                <TextBlock Classes="dim" FontSize="11" VerticalAlignment="Center"
+                                                           Text="{Binding Code, StringFormat=c{0}}" />
+                                            </StackPanel>
+                                        </DataTemplate>
+                                    </ComboBox.ItemTemplate>
+                                </ComboBox>
+                            </Grid>
+                        </Border>
+
+                        <TabControl x:Name="EditorTabs" Grid.Row="1" Margin="8,2,8,0" Padding="0,4,0,0">
+
+                            <!-- ── MODEL TAB ── -->
+                            <TabItem Header="Model" FontSize="13">
+                                <ScrollViewer>
+                                    <StackPanel Margin="10,8" Spacing="12">
+                                        <StackPanel Orientation="Horizontal" Spacing="8">
+                                            <TextBlock Classes="dim" Text="{Binding Editor.ModelPath}"
+                                                       VerticalAlignment="Center" FontSize="11"
+                                                       TextTrimming="CharacterEllipsis" MaxWidth="300" />
+                                            <Border Background="{StaticResource MoonAccentDimBrush}" CornerRadius="999" Padding="8,2"
+                                                    IsVisible="{Binding Editor.ModelModified}">
+                                                <TextBlock Text="Modified" FontSize="11" Foreground="#221A1F" />
+                                            </Border>
+                                        </StackPanel>
+
+                                        <TextBlock Classes="dim" FontSize="12" TextWrapping="Wrap"
+                                                   Text="Export the model to edit its meshes in Blender, then import the result. Keep the material names and vertex groups that come with the export." />
+                                        <StackPanel Orientation="Horizontal" Spacing="8">
+                                            <Button Content="Export GLTF…" Command="{Binding Editor.ExportGltfCommand}" />
+                                            <Button Content="Import GLTF…" Command="{Binding Editor.ImportGltfCommand}" />
+                                        </StackPanel>
+
+                                        <Rectangle Height="1" Fill="{StaticResource MoonBorderBrush}" Margin="0,4" />
+
+                                        <TextBlock Text="Mesh groups" FontWeight="SemiBold" FontSize="13" />
+                                        <TextBlock Classes="dim" FontSize="12" TextWrapping="Wrap"
+                                                   Text="Each mesh group can use any of the model's materials." />
+                                        <ItemsControl ItemsSource="{Binding Editor.MeshAssignments}">
+                                            <ItemsControl.ItemTemplate>
+                                                <DataTemplate x:DataType="vm:MeshAssignmentViewModel">
+                                                    <Grid ColumnDefinitions="130,*" Margin="0,3">
+                                                        <TextBlock Grid.Column="0" Classes="dim" FontSize="12"
+                                                                   Text="{Binding Label}" VerticalAlignment="Center" />
+                                                        <ComboBox Grid.Column="1" FontSize="12"
+                                                                  ItemsSource="{Binding MaterialNames}"
+                                                                  SelectedIndex="{Binding SelectedMaterialIndex}"
+                                                                  HorizontalAlignment="Stretch" />
+                                                    </Grid>
+                                                </DataTemplate>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
+                                        <Button Classes="primary" Content="Apply assignments" FontSize="12"
+                                                HorizontalAlignment="Left"
+                                                Command="{Binding Editor.ApplyMeshAssignmentsCommand}" />
+                                    </StackPanel>
+                                </ScrollViewer>
+                            </TabItem>
+
+                            <!-- ── MATERIAL TAB ── -->
+                            <TabItem Header="Material" FontSize="13">
+                                <Grid RowDefinitions="Auto,*" Margin="4,4">
+                                    <ListBox Grid.Row="0" MaxHeight="110" Margin="0,0,0,6"
+                                             ItemsSource="{Binding Editor.Materials}"
+                                             SelectedItem="{Binding Editor.SelectedMaterial}">
+                                        <ListBox.ItemTemplate>
+                                            <DataTemplate x:DataType="vm:MaterialViewModel">
+                                                <StackPanel Spacing="1">
+                                                    <StackPanel Orientation="Horizontal" Spacing="6">
+                                                        <TextBlock Text="{Binding DisplayName}" FontSize="12" TextTrimming="CharacterEllipsis" />
+                                                        <TextBlock FontSize="11" Text="●" Foreground="{StaticResource MoonAccentBrush}"
+                                                                   IsVisible="{Binding Modified}" />
+                                                    </StackPanel>
+                                                    <TextBlock Classes="dim" FontSize="10" Text="{Binding ShaderPack}" />
+                                                </StackPanel>
+                                            </DataTemplate>
+                                        </ListBox.ItemTemplate>
+                                    </ListBox>
+
+                                    <ContentControl Grid.Row="1" Content="{Binding Editor.SelectedMaterial}">
+                                        <ContentControl.ContentTemplate>
+                                            <DataTemplate x:DataType="vm:MaterialViewModel">
+                                                <ScrollViewer>
+                                                    <StackPanel Spacing="10" Margin="2,4">
+
+                                                        <StackPanel Spacing="6" IsVisible="{Binding HasColorTable}">
+                                                            <TextBlock Text="Color table" FontWeight="SemiBold" FontSize="13" />
+                                                            <Grid ColumnDefinitions="120,*">
+                                                                <ListBox Grid.Column="0" Height="190"
+                                                                         ItemsSource="{Binding Rows}" SelectedItem="{Binding SelectedRow}">
+                                                                    <ListBox.ItemTemplate>
+                                                                        <DataTemplate x:DataType="vm:ColorRowViewModel">
+                                                                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                                                                <Border Width="14" Height="14" CornerRadius="3">
+                                                                                    <Border.Background>
+                                                                                        <SolidColorBrush Color="{Binding Swatch}" />
+                                                                                    </Border.Background>
+                                                                                </Border>
+                                                                                <TextBlock Text="{Binding Label}" FontSize="12" />
+                                                                            </StackPanel>
+                                                                        </DataTemplate>
+                                                                    </ListBox.ItemTemplate>
+                                                                </ListBox>
+
+                                                                <StackPanel Grid.Column="1" Margin="10,0,0,0" Spacing="6"
+                                                                            DataContext="{Binding SelectedRow}"
+                                                                            IsVisible="{Binding ., Converter={x:Static ObjectConverters.IsNotNull}}"
+                                                                            x:DataType="vm:ColorRowViewModel">
+                                                                    <Grid ColumnDefinitions="64,*,*,*" RowDefinitions="Auto,Auto,Auto" ColumnSpacing="5" RowSpacing="4">
+                                                                        <TextBlock Grid.Row="0" Grid.Column="0" Classes="dim" Text="Diffuse" FontSize="12" VerticalAlignment="Center" />
+                                                                        <TextBox Grid.Row="0" Grid.Column="1" Text="{Binding DiffuseR}" FontSize="12" />
+                                                                        <TextBox Grid.Row="0" Grid.Column="2" Text="{Binding DiffuseG}" FontSize="12" />
+                                                                        <TextBox Grid.Row="0" Grid.Column="3" Text="{Binding DiffuseB}" FontSize="12" />
+                                                                        <TextBlock Grid.Row="1" Grid.Column="0" Classes="dim" Text="Specular" FontSize="12" VerticalAlignment="Center" />
+                                                                        <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding SpecularR}" FontSize="12" />
+                                                                        <TextBox Grid.Row="1" Grid.Column="2" Text="{Binding SpecularG}" FontSize="12" />
+                                                                        <TextBox Grid.Row="1" Grid.Column="3" Text="{Binding SpecularB}" FontSize="12" />
+                                                                        <TextBlock Grid.Row="2" Grid.Column="0" Classes="dim" Text="Emissive" FontSize="12" VerticalAlignment="Center" />
+                                                                        <TextBox Grid.Row="2" Grid.Column="1" Text="{Binding EmissiveR}" FontSize="12" />
+                                                                        <TextBox Grid.Row="2" Grid.Column="2" Text="{Binding EmissiveG}" FontSize="12" />
+                                                                        <TextBox Grid.Row="2" Grid.Column="3" Text="{Binding EmissiveB}" FontSize="12" />
+                                                                    </Grid>
+                                                                    <Grid ColumnDefinitions="64,*,84,*" ColumnSpacing="5">
+                                                                        <TextBlock Grid.Column="0" Classes="dim" Text="Gloss" FontSize="12" VerticalAlignment="Center" />
+                                                                        <TextBox Grid.Column="1" Text="{Binding Gloss}" FontSize="12" />
+                                                                        <TextBlock Grid.Column="2" Classes="dim" Text="Spec str." FontSize="12" VerticalAlignment="Center" Margin="6,0,0,0" />
+                                                                        <TextBox Grid.Column="3" Text="{Binding SpecularStrength}" FontSize="12" />
+                                                                    </Grid>
+                                                                </StackPanel>
+                                                            </Grid>
+                                                            <Button Classes="primary" Content="Apply colors" FontSize="12"
+                                                                    HorizontalAlignment="Left" Command="{Binding ApplyCommand}" />
+                                                        </StackPanel>
+
+                                                        <Rectangle Height="1" Fill="{StaticResource MoonBorderBrush}" Margin="0,2" />
+
+                                                        <TextBlock Text="Textures" FontWeight="SemiBold" FontSize="13" />
+                                                        <TextBlock Classes="dim" FontSize="12" TextWrapping="Wrap"
+                                                                   Text="Each slot can point at any .tex path in the game data." />
+                                                        <ItemsControl ItemsSource="{Binding TextureSlots}">
+                                                            <ItemsControl.ItemTemplate>
+                                                                <DataTemplate x:DataType="vm:TextureSlotViewModel">
+                                                                    <Grid ColumnDefinitions="70,*" Margin="0,3">
+                                                                        <TextBlock Grid.Column="0" Classes="dim" FontSize="12"
+                                                                                   Text="{Binding Role}" VerticalAlignment="Center" />
+                                                                        <TextBox Grid.Column="1" FontSize="11" Text="{Binding Path}" />
+                                                                    </Grid>
+                                                                </DataTemplate>
+                                                            </ItemsControl.ItemTemplate>
+                                                        </ItemsControl>
+                                                        <Button Classes="primary" Content="Apply textures" FontSize="12"
+                                                                HorizontalAlignment="Left" Command="{Binding ApplyTexturesCommand}" />
+                                                    </StackPanel>
+                                                </ScrollViewer>
+                                            </DataTemplate>
+                                        </ContentControl.ContentTemplate>
+                                    </ContentControl>
+                                </Grid>
+                            </TabItem>
+
+                            <!-- ── TEXTURE TAB ── -->
+                            <TabItem Header="Texture" FontSize="13">
+                                <Grid RowDefinitions="*,Auto,Auto" Margin="4,4">
+                                    <ListBox Grid.Row="0" ItemsSource="{Binding Editor.Textures}"
+                                             SelectedItem="{Binding Editor.SelectedTexture}">
+                                        <ListBox.ItemTemplate>
+                                            <DataTemplate x:DataType="vm:TextureViewModel">
+                                                <StackPanel Spacing="1">
+                                                    <StackPanel Orientation="Horizontal" Spacing="6">
+                                                        <TextBlock Text="{Binding FileName}" FontSize="12" TextTrimming="CharacterEllipsis" />
+                                                        <TextBlock FontSize="11" Text="●" Foreground="{StaticResource MoonAccentBrush}"
+                                                                   IsVisible="{Binding Modified}" />
+                                                    </StackPanel>
+                                                    <StackPanel Orientation="Horizontal" Spacing="8">
+                                                        <TextBlock Classes="dim" FontSize="10" Text="{Binding Role}" />
+                                                        <TextBlock Classes="dim" FontSize="10" Text="{Binding Dimensions}" />
+                                                    </StackPanel>
+                                                </StackPanel>
+                                            </DataTemplate>
+                                        </ListBox.ItemTemplate>
+                                    </ListBox>
+
+                                    <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="8" Margin="0,8">
+                                        <Button Content="Export PNG…" Command="{Binding Editor.ExportTextureCommand}" FontSize="12" />
+                                        <Button Content="Import…" Command="{Binding Editor.ImportTextureCommand}" FontSize="12" />
+                                    </StackPanel>
+
+                                    <Border Grid.Row="2" Background="#100E12" CornerRadius="8" Height="190"
+                                            BorderBrush="{StaticResource MoonBorderBrush}" BorderThickness="1">
+                                        <Image Source="{Binding Editor.TexturePreview}" Stretch="Uniform" Margin="6" />
+                                    </Border>
+                                </Grid>
+                            </TabItem>
+                        </TabControl>
+
+                        <!-- Session strip -->
+                        <Border Grid.Row="2" BorderBrush="{StaticResource MoonBorderBrush}" BorderThickness="0,1,0,0"
+                                Padding="12,8">
+                            <StackPanel Spacing="6">
+                                <StackPanel Orientation="Horizontal" Spacing="10">
+                                    <TextBlock Classes="dim" FontSize="12" Text="{Binding Editor.SessionSummary}" VerticalAlignment="Center" />
+                                    <Border Background="{StaticResource MoonAccentDimBrush}" CornerRadius="999" Padding="8,2"
+                                            IsVisible="{Binding Editor.SessionDirty}">
+                                        <TextBlock Text="Modified" FontSize="11" FontWeight="SemiBold" Foreground="#221A1F" />
+                                    </Border>
+                                    <Border Background="{StaticResource MoonLilacBrush}" CornerRadius="999" Padding="8,2"
+                                            IsVisible="{Binding Editor.IsLiveLinked}">
+                                        <TextBlock Text="Live" FontSize="11" FontWeight="SemiBold" Foreground="#221A1F" />
+                                    </Border>
+                                </StackPanel>
+                                <TextBlock FontSize="12" Foreground="#E89B9B" Text="{Binding Editor.ErrorText}"
+                                           TextWrapping="Wrap"
+                                           IsVisible="{Binding Editor.ErrorText, Converter={x:Static ObjectConverters.IsNotNull}}" />
+                                <StackPanel Orientation="Horizontal" Spacing="8"
+                                            IsVisible="{Binding !Editor.IsLiveLinked}">
+                                    <Button Content="Discard changes" FontSize="12"
+                                            Command="{Binding Editor.RequestDiscardCommand}"
+                                            IsEnabled="{Binding Editor.SessionDirty}"
+                                            IsVisible="{Binding !Editor.IsConfirmingDiscard}" />
+                                    <StackPanel Orientation="Horizontal" Spacing="6"
+                                                IsVisible="{Binding Editor.IsConfirmingDiscard}">
+                                        <TextBlock Classes="dim" FontSize="12" VerticalAlignment="Center" Text="Discard all changes?" />
+                                        <Button Content="Discard" FontSize="12" Command="{Binding Editor.ConfirmDiscardCommand}" />
+                                        <Button Content="Keep" FontSize="12" Command="{Binding Editor.CancelDiscardCommand}" />
+                                    </StackPanel>
+                                    <Button Classes="primary" Content="Export PMP…" FontSize="12"
+                                            Command="{Binding Editor.OpenPmpPanelCommand}"
+                                            IsEnabled="{Binding Editor.SessionDirty}" />
+                                </StackPanel>
+                                <TextBlock Classes="dim" FontSize="12" TextWrapping="Wrap"
+                                           IsVisible="{Binding Editor.IsLiveLinked}"
+                                           Text="Edits write directly into the linked mod. Revert, change options or unlink from the Penumbra menu." />
+                            </StackPanel>
+                        </Border>
+                    </Grid>
+                </Panel>
+            </Border>
+
+            <Rectangle Grid.Column="3" Fill="{StaticResource MoonBorderBrush}" Margin="0,16" />
+
+            <!-- ═══ Column 3: 3D viewport, always visible ═══ -->
+            <Border Grid.Column="4" Margin="6,12,12,6"
+                    Background="#100E12"
+                    BorderBrush="{StaticResource MoonBorderBrush}" BorderThickness="1"
+                    CornerRadius="10" ClipToBounds="True">
+                <Panel>
+                    <controls:ModelViewport x:Name="Viewport" />
+
+                    <!-- Empty state -->
+                    <TextBlock Classes="dim" VerticalAlignment="Center" HorizontalAlignment="Center"
+                               Text="Select an item to view its model">
+                        <TextBlock.IsVisible>
+                            <MultiBinding Converter="{x:Static BoolConverters.And}">
+                                <Binding Path="SelectedItem" Converter="{x:Static ObjectConverters.IsNull}" />
+                                <Binding Path="!IsLoadingModel" />
+                            </MultiBinding>
+                        </TextBlock.IsVisible>
+                    </TextBlock>
+
+                    <!-- Error state -->
+                    <Border VerticalAlignment="Center" HorizontalAlignment="Center"
+                            Background="{StaticResource MoonPanelBrush}" CornerRadius="10"
+                            Padding="20,14" MaxWidth="380"
+                            IsVisible="{Binding ViewportMessage, Converter={x:Static ObjectConverters.IsNotNull}}">
+                        <TextBlock Text="{Binding ViewportMessage}" TextWrapping="Wrap" />
+                    </Border>
+
+                    <!-- GL failure -->
+                    <Border VerticalAlignment="Center" HorizontalAlignment="Center"
+                            Background="{StaticResource MoonPanelBrush}" CornerRadius="10"
+                            Padding="20,14" MaxWidth="380"
+                            IsVisible="{Binding #Viewport.RenderError, Converter={x:Static ObjectConverters.IsNotNull}}">
+                        <TextBlock Text="{Binding #Viewport.RenderError}" TextWrapping="Wrap" />
+                    </Border>
+
+                    <!-- Model loading indicator -->
+                    <Border VerticalAlignment="Top" HorizontalAlignment="Center" Margin="0,14,0,0"
+                            Background="{StaticResource MoonPanelBrush}" CornerRadius="999"
+                            Padding="16,7" IsVisible="{Binding IsLoadingModel}">
+                        <StackPanel Orientation="Horizontal" Spacing="10">
+                            <ProgressBar IsIndeterminate="True" Width="80" Height="4" />
+                            <TextBlock Classes="dim" Text="Loading model…" FontSize="12" />
+                        </StackPanel>
+                    </Border>
+
+                    <!-- Busy pill for editing operations -->
+                    <Border VerticalAlignment="Bottom" HorizontalAlignment="Center" Margin="0,0,0,14"
+                            Background="{StaticResource MoonPanelBrush}" CornerRadius="999"
+                            Padding="16,7" IsVisible="{Binding Editor.IsBusy}">
+                        <StackPanel Orientation="Horizontal" Spacing="10">
+                            <ProgressBar IsIndeterminate="True" Width="80" Height="4" />
+                            <TextBlock Classes="dim" Text="{Binding Editor.BusyText}" FontSize="12" />
+                        </StackPanel>
+                    </Border>
+
+                    <!-- Camera controls hint -->
+                    <TextBlock Classes="dim" FontSize="11" IsHitTestVisible="False"
+                               VerticalAlignment="Bottom" HorizontalAlignment="Left" Margin="14,0,0,10"
+                               Text="drag to rotate  ·  right-drag to move  ·  scroll to zoom"
+                               IsVisible="{Binding SelectedItem, Converter={x:Static ObjectConverters.IsNotNull}}" />
+
+                    <!-- PMP metadata panel -->
+                    <Border VerticalAlignment="Center" HorizontalAlignment="Center"
+                            Background="{StaticResource MoonPanelBrush}"
+                            BorderBrush="{StaticResource MoonBorderBrush}" BorderThickness="1"
+                            CornerRadius="12" Padding="24,20" Width="400"
+                            IsVisible="{Binding Editor.IsPmpPanelOpen}">
+                        <StackPanel Spacing="10">
+                            <TextBlock Classes="title" FontSize="16" Text="Export as PMP" />
+                            <TextBox Text="{Binding Editor.PmpName}" Watermark="Name" />
+                            <TextBox Text="{Binding Editor.PmpAuthor}" Watermark="Author" />
+                            <TextBox Text="{Binding Editor.PmpVersion}" Watermark="Version" />
+                            <TextBox Text="{Binding Editor.PmpDescription}" Watermark="Description"
+                                     AcceptsReturn="True" Height="60" />
+                            <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Right">
+                                <Button Content="Cancel" Command="{Binding Editor.ClosePmpPanelCommand}" />
+                                <Button Classes="primary" Content="Export" Command="{Binding Editor.ExportPmpCommand}" />
+                            </StackPanel>
+                        </StackPanel>
+                    </Border>
+                </Panel>
+            </Border>
+        </Grid>
+
+        <!-- Status bar -->
+        <Border Grid.Row="1" Background="{StaticResource MoonPanelBrush}"
+                BorderBrush="{StaticResource MoonBorderBrush}" BorderThickness="0,1,0,0"
+                Padding="14,7" Margin="0,6,0,0">
+            <TextBlock Classes="dim" FontSize="12" Text="{Binding StatusText}" TextTrimming="CharacterEllipsis" />
+        </Border>
+    </Grid>
+</UserControl>
