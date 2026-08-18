@@ -16,6 +16,8 @@
                 <DockPanel>
                     <Menu DockPanel.Dock="Left" Padding="4,2">
                         <MenuItem Header="Files" FontSize="13">
+                            <MenuItem Header="Import mod…"
+                                      Command="{Binding Files.ImportModCommand}" />
                             <MenuItem Header="Upgrade to DT…"
                                       Command="{Binding Files.UpgradeToDtCommand}" />
                         </MenuItem>
@@ -187,37 +189,37 @@
             </Border>
         </Border>
 
-        <!-- Upgrade to DT: confirmation -->
+        <!-- Files action (import / upgrade): confirmation -->
         <Border Background="#C0141216" IsVisible="{Binding Files.IsConfirmOpen}">
             <Border VerticalAlignment="Center" HorizontalAlignment="Center"
                     Background="{StaticResource MoonPanelBrush}"
                     BorderBrush="{StaticResource MoonBorderBrush}" BorderThickness="1"
                     CornerRadius="12" Padding="24,20" Width="460">
                 <StackPanel Spacing="12">
-                    <TextBlock Classes="title" FontSize="16" Text="Upgrade to Dawntrail" />
-                    <TextBlock FontSize="13" TextWrapping="Wrap" Text="{Binding Files.ConfirmModName, StringFormat=Upgrade “{0}”?}" />
+                    <TextBlock Classes="title" FontSize="16" Text="{Binding Files.ConfirmTitle}" />
+                    <TextBlock FontSize="13" TextWrapping="Wrap" Text="{Binding Files.ConfirmQuestion}" />
                     <TextBlock Classes="dim" FontSize="12" TextWrapping="Wrap"
-                               Text="A new upgraded .pmp is written — the selected modpack itself is not touched. Legacy (Endwalker) gear materials are converted to Dawntrail formats: materials become characterlegacy with 32-row color tables, index textures are generated from the old normal maps, and mask/normal channels are moved. Skin, hair and already-current materials are left alone; .meta/.rgsp metadata entries are not carried over." />
+                               Text="{Binding Files.ConfirmBody}" />
                     <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Right">
-                        <Button Content="Cancel" Command="{Binding Files.CancelUpgradeCommand}" />
-                        <Button Classes="primary" Content="Choose output…" Command="{Binding Files.ConfirmUpgradeCommand}" />
+                        <Button Content="Cancel" Command="{Binding Files.CancelConfirmCommand}" />
+                        <Button Classes="primary" Content="{Binding Files.ConfirmButtonText}" Command="{Binding Files.ConfirmCommand}" />
                     </StackPanel>
                 </StackPanel>
             </Border>
         </Border>
 
-        <!-- Upgrade to DT: busy -->
+        <!-- Files action: busy -->
         <Border Background="#C0141216" IsVisible="{Binding Files.IsBusy}">
             <Border VerticalAlignment="Center" HorizontalAlignment="Center"
                     Background="{StaticResource MoonPanelBrush}" CornerRadius="999" Padding="20,10">
                 <StackPanel Orientation="Horizontal" Spacing="10">
                     <ProgressBar IsIndeterminate="True" Width="120" Height="4" />
-                    <TextBlock Classes="dim" Text="Upgrading mod…" FontSize="12" />
+                    <TextBlock Classes="dim" Text="{Binding Files.BusyText}" FontSize="12" />
                 </StackPanel>
             </Border>
         </Border>
 
-        <!-- Upgrade to DT: summary -->
+        <!-- Files action: summary -->
         <Border Background="#C0141216" IsVisible="{Binding Files.IsSummaryOpen}">
             <Border VerticalAlignment="Center" HorizontalAlignment="Center"
                     Background="{StaticResource MoonPanelBrush}"

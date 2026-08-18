@@ -89,6 +89,7 @@ public partial class App : Application
         services.AddSingleton<IRenderModelLoader, RenderModelBuilder>();
         services.AddSingleton<Moonlace.GameData.Editing.ItemEditingService>();
         services.AddSingleton<Moonlace.GameData.Upgrade.DawntrailModUpgrader>();
+        services.AddSingleton<Moonlace.GameData.Import.ModpackImporter>();
 
         // App
         services.AddSingleton<IFolderPickerService, FolderPickerService>();

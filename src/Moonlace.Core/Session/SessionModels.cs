@@ -5,6 +5,9 @@ public enum SessionAssetKind
     Model,
     Material,
     Texture,
+
+    /// <summary>Anything else a modpack import can carry (avfx, scd, shpk, …).</summary>
+    Other,
 }
 
 /// <summary>
