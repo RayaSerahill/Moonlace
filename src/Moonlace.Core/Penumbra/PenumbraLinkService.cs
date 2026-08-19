@@ -120,13 +120,13 @@ public sealed class PenumbraLinkService : IPenumbraLinkService
             _defaultFiles = new Dictionary<string, string>(info.DefaultFiles, StringComparer.OrdinalIgnoreCase);
             _selection = NormalizeSelection(selection, info.Groups);
             _writeCounts.Clear();
-            _backups = ModBackups.Load(directory);
+            _backups = ModBackups.Load(info.Directory);
             _generation++;
             RebuildMapLocked();
 
             _logger.LogInformation(
                 "Penumbra live edit linked: \"{Name}\" at {Dir} ({Files} redirections, {Groups} groups, {Backups} existing backups)",
-                info.Name, directory, _fileMap.Count, info.Groups.Count, _backups.Count);
+                info.Name, info.Directory, _fileMap.Count, info.Groups.Count, _backups.Count);
         }
 
         LinkChanged?.Invoke();
@@ -431,7 +431,11 @@ public sealed class PenumbraLinkService : IPenumbraLinkService
 
         var info = new PenumbraModInfo
         {
-            Directory = Path.GetFullPath(directory),
+            // Trim the trailing separator a folder picker or shell tab
+            // completion may leave: the escape check in ResolveModPathLocked
+            // compares against root + separator, and a kept trailing slash
+            // would make every redirect look like it escapes the mod folder.
+            Directory = Path.TrimEndingDirectorySeparator(Path.GetFullPath(directory)),
             Name = name,
             DefaultFiles = defaultFiles,
             Groups = groups,
