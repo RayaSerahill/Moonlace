@@ -59,12 +59,12 @@ public sealed class RealGameDataTests : IDisposable
     {
         Skip.IfNot(TryInit());
         var repo = new ItemRepository(_service, NullLogger<ItemRepository>.Instance);
-        var resolver = new AssetPathResolver(_service, NullLogger<AssetPathResolver>.Instance);
         var session = new Moonlace.Core.Session.SessionService(
             NullLogger<Moonlace.Core.Session.SessionService>.Instance,
             Path.Combine(Path.GetTempPath(), "moonlace-test-sessions-" + Guid.NewGuid().ToString("N")));
         var link = new Moonlace.Core.Penumbra.PenumbraLinkService(NullLogger<Moonlace.Core.Penumbra.PenumbraLinkService>.Instance);
         var assets = new EffectiveAssetProvider(_service, session, link);
+        var resolver = new AssetPathResolver(_service, assets, NullLogger<AssetPathResolver>.Instance);
         var textures = new TextureDecoder(_service, assets, NullLogger<TextureDecoder>.Instance);
         var builder = new RenderModelBuilder(assets, resolver, textures, NullLogger<RenderModelBuilder>.Instance);
 

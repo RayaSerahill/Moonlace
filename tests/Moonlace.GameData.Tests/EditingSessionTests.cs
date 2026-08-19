@@ -64,7 +64,7 @@ public sealed class EditingSessionTests : IDisposable
         var session = new SessionService(NullLogger<SessionService>.Instance, Path.Combine(_tempRoot, "sessions"));
         var link = new Moonlace.Core.Penumbra.PenumbraLinkService(NullLogger<Moonlace.Core.Penumbra.PenumbraLinkService>.Instance);
         var assets = new EffectiveAssetProvider(_service, session, link);
-        var resolver = new AssetPathResolver(_service, NullLogger<AssetPathResolver>.Instance);
+        var resolver = new AssetPathResolver(_service, assets, NullLogger<AssetPathResolver>.Instance);
         var textures = new TextureDecoder(_service, assets, NullLogger<TextureDecoder>.Instance);
         var editing = new ItemEditingService(assets, resolver, textures, session, link, NullLogger<ItemEditingService>.Instance);
         var builder = new RenderModelBuilder(assets, resolver, textures, NullLogger<RenderModelBuilder>.Instance);

@@ -72,10 +72,34 @@ public partial class EditorViewModel : ViewModelBase
     public ObservableCollection<GameData.Resolution.RaceVariant> ModelVersions { get; } = [];
 
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(NewVersionHint))]
     private GameData.Resolution.RaceVariant? _selectedVersion;
 
     [ObservableProperty]
+    private bool _hasVersions;
+
+    [ObservableProperty]
     private bool _hasMultipleVersions;
+
+    // --- New model version (race/gender combinations without one yet) ---
+
+    public ObservableCollection<GameData.Resolution.RaceVariant> CreatableVersions { get; } = [];
+
+    [ObservableProperty]
+    private GameData.Resolution.RaceVariant? _selectedNewVersion;
+
+    [ObservableProperty]
+    private bool _hasCreatableVersions;
+
+    [ObservableProperty]
+    private bool _isNewVersionPanelOpen;
+
+    /// <summary>Explains what creating a version will copy — based on the selected source version.</summary>
+    public string NewVersionHint => SelectedVersion is { } source
+        ? $"Copies the {source.Label} version — the new version gets its own model, materials and textures, editable without touching the other versions."
+        : "";
+
+    private bool _autoCreateVersionConsumed;
 
     // --- Model tab: mesh → material assignments ---
 
@@ -161,31 +185,59 @@ public partial class EditorViewModel : ViewModelBase
         HasItem = item is not null;
         ErrorText = null;
         IsConfirmingDiscard = false;
+        IsNewVersionPanelOpen = false;
         if (item is not null)
             PmpName = $"{item.Name} Edit";
 
         // Populate the model-version selector; default to the first variant
-        // that exists (the resolver's own fallback choice).
+        // that exists (the resolver's own fallback choice). Dev/testing hook:
+        // MOONLACE_AUTOVERSION pre-selects a version without UI automation.
+        await LoadVersionsAsync(Environment.GetEnvironmentVariable("MOONLACE_AUTOVERSION"));
+
+        // Dev/testing hook: create a model version right after the first item
+        // selection settles (runs once; composes with MOONLACE_AUTOSELECT).
+        if (!_autoCreateVersionConsumed && item is not null
+            && Environment.GetEnvironmentVariable("MOONLACE_AUTOCREATEVERSION") is { Length: > 0 } autoCreate)
+        {
+            _autoCreateVersionConsumed = true;
+            Avalonia.Threading.Dispatcher.UIThread.Post(() => _ = AutoCreateVersionAsync(autoCreate));
+        }
+    }
+
+    /// <summary>
+    /// (Re)loads the model-version selector and the creatable-version list,
+    /// keeping <paramref name="preferCode"/> selected when it still exists.
+    /// The resolver's preferred race code is only reassigned at the end, so a
+    /// concurrent viewport load never sees a transient null.
+    /// </summary>
+    private async Task LoadVersionsAsync(string? preferCode)
+    {
+        var item = _item;
         _settingVersions = true;
         try
         {
             ModelVersions.Clear();
+            CreatableVersions.Clear();
             SelectedVersion = null;
-            _resolver.PreferredRaceCode = null;
+            SelectedNewVersion = null;
             if (item is not null)
             {
-                var variants = await Task.Run(() => _resolver.GetAvailableVariants(item));
+                var (variants, missing) = await Task.Run(() =>
+                    (_resolver.GetAvailableVariants(item), _resolver.GetMissingVariants(item)));
                 foreach (var variant in variants)
                     ModelVersions.Add(variant);
+                foreach (var variant in missing)
+                    CreatableVersions.Add(variant);
 
-                // Dev/testing hook: pre-select a version without UI automation.
-                var autoVersion = Environment.GetEnvironmentVariable("MOONLACE_AUTOVERSION");
-                SelectedVersion = ModelVersions.FirstOrDefault(v => v.Code == autoVersion)
+                SelectedVersion = ModelVersions.FirstOrDefault(v => v.Code == preferCode)
                     ?? ModelVersions.FirstOrDefault();
-                _resolver.PreferredRaceCode = SelectedVersion?.Code;
+                SelectedNewVersion = CreatableVersions.FirstOrDefault();
             }
 
+            _resolver.PreferredRaceCode = SelectedVersion?.Code;
+            HasVersions = ModelVersions.Count > 0;
             HasMultipleVersions = ModelVersions.Count > 1;
+            HasCreatableVersions = CreatableVersions.Count > 0;
         }
         finally
         {
@@ -193,8 +245,16 @@ public partial class EditorViewModel : ViewModelBase
         }
     }
 
-    /// <summary>Second phase: (re)loads the tab contents for the current item and version.</summary>
-    public Task RefreshTabsAsync() => RefreshAsync();
+    /// <summary>
+    /// Second phase: (re)loads the tab contents for the current item and
+    /// version. Also re-enumerates the model versions — effective assets may
+    /// have changed wholesale (link, revert, import) since the last load.
+    /// </summary>
+    public async Task RefreshTabsAsync()
+    {
+        await LoadVersionsAsync(SelectedVersion?.Code);
+        await RefreshAsync();
+    }
 
     partial void OnSelectedVersionChanged(GameData.Resolution.RaceVariant? value)
     {
@@ -210,6 +270,48 @@ public partial class EditorViewModel : ViewModelBase
     {
         await RefreshAsync();
         NotifyAssetsChanged();
+    }
+
+    // --- New model version ---
+
+    [RelayCommand]
+    private void OpenNewVersionPanel() => IsNewVersionPanelOpen = HasCreatableVersions;
+
+    [RelayCommand]
+    private void CloseNewVersionPanel() => IsNewVersionPanelOpen = false;
+
+    /// <summary>
+    /// Creates a model version for the chosen race/gender by copying the
+    /// currently selected version, then selects the new version for editing.
+    /// </summary>
+    [RelayCommand]
+    private async Task CreateVersionAsync()
+    {
+        if (_item is null || SelectedVersion is not { } source || SelectedNewVersion is not { } target)
+            return;
+
+        IsNewVersionPanelOpen = false;
+        await RunOperationAsync($"Creating {target.Label} version…", async () =>
+        {
+            var files = await _editing.CreateModelVersionAsync(_item, source.Code, target.Code);
+            _logger.LogInformation("Created model version c{Code} from c{Source} ({Files} files)",
+                target.Code, source.Code, files);
+            await LoadVersionsAsync(target.Code);
+            await RefreshAsync();
+            NotifyAssetsChanged();
+        });
+    }
+
+    private async Task AutoCreateVersionAsync(string raceCode)
+    {
+        SelectedNewVersion = CreatableVersions.FirstOrDefault(v => v.Code == raceCode);
+        if (SelectedNewVersion is null)
+        {
+            _logger.LogWarning("MOONLACE_AUTOCREATEVERSION: c{Code} is not creatable for this item", raceCode);
+            return;
+        }
+
+        await CreateVersionAsync();
     }
 
     private async Task RefreshAsync()
@@ -465,6 +567,8 @@ public partial class EditorViewModel : ViewModelBase
         await RunOperationAsync("Discarding changes…", async () =>
         {
             _session.DiscardActiveSession();
+            // Created model versions vanish with the session — re-enumerate.
+            await LoadVersionsAsync(SelectedVersion?.Code);
             await RefreshAsync();
             NotifyAssetsChanged();
         });

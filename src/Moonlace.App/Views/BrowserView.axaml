@@ -80,8 +80,8 @@
 
                         <!-- Model version (race variant) selector -->
                         <Border Grid.Row="0" BorderBrush="{StaticResource MoonBorderBrush}" BorderThickness="0,0,0,1"
-                                Padding="12,8" IsVisible="{Binding Editor.HasMultipleVersions}">
-                            <Grid ColumnDefinitions="Auto,*" ColumnSpacing="10">
+                                Padding="12,8" IsVisible="{Binding Editor.HasVersions}">
+                            <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="10">
                                 <TextBlock Grid.Column="0" Classes="dim" Text="Model version" FontSize="12"
                                            VerticalAlignment="Center" />
                                 <ComboBox Grid.Column="1" FontSize="12" HorizontalAlignment="Stretch"
@@ -97,6 +97,10 @@
                                         </DataTemplate>
                                     </ComboBox.ItemTemplate>
                                 </ComboBox>
+                                <Button Grid.Column="2" Content="New…" FontSize="12"
+                                        Command="{Binding Editor.OpenNewVersionPanelCommand}"
+                                        IsVisible="{Binding Editor.HasCreatableVersions}"
+                                        ToolTip.Tip="Create a model version for a race/gender this item has none for yet" />
                             </Grid>
                         </Border>
 
@@ -390,6 +394,36 @@
                                VerticalAlignment="Bottom" HorizontalAlignment="Left" Margin="14,0,0,10"
                                Text="drag to rotate  ·  right-drag to move  ·  scroll to zoom"
                                IsVisible="{Binding SelectedItem, Converter={x:Static ObjectConverters.IsNotNull}}" />
+
+                    <!-- New model version panel -->
+                    <Border VerticalAlignment="Center" HorizontalAlignment="Center"
+                            Background="{StaticResource MoonPanelBrush}"
+                            BorderBrush="{StaticResource MoonBorderBrush}" BorderThickness="1"
+                            CornerRadius="12" Padding="24,20" Width="400"
+                            IsVisible="{Binding Editor.IsNewVersionPanelOpen}">
+                        <StackPanel Spacing="10">
+                            <TextBlock Classes="title" FontSize="16" Text="New model version" />
+                            <TextBlock Classes="dim" FontSize="12" TextWrapping="Wrap"
+                                       Text="{Binding Editor.NewVersionHint}" />
+                            <ComboBox FontSize="12" HorizontalAlignment="Stretch"
+                                      ItemsSource="{Binding Editor.CreatableVersions}"
+                                      SelectedItem="{Binding Editor.SelectedNewVersion}">
+                                <ComboBox.ItemTemplate>
+                                    <DataTemplate>
+                                        <StackPanel Orientation="Horizontal" Spacing="8">
+                                            <TextBlock Text="{Binding Label}" FontSize="12" />
+                                            <TextBlock Classes="dim" FontSize="11" VerticalAlignment="Center"
+                                                       Text="{Binding Code, StringFormat=c{0}}" />
+                                        </StackPanel>
+                                    </DataTemplate>
+                                </ComboBox.ItemTemplate>
+                            </ComboBox>
+                            <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Right">
+                                <Button Content="Cancel" Command="{Binding Editor.CloseNewVersionPanelCommand}" />
+                                <Button Classes="primary" Content="Create" Command="{Binding Editor.CreateVersionCommand}" />
+                            </StackPanel>
+                        </StackPanel>
+                    </Border>
 
                     <!-- PMP metadata panel -->
                     <Border VerticalAlignment="Center" HorizontalAlignment="Center"

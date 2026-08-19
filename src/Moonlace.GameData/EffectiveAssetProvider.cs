@@ -38,6 +38,14 @@ public sealed class EffectiveAssetProvider
             : null;
     }
 
+    /// <summary>
+    /// True when the path resolves to any effective content: a game original,
+    /// a session copy, or a linked-mod file — including files that exist only
+    /// as edits (e.g. a newly created race-variant model).
+    /// </summary>
+    public bool FileExists(string gamePath) =>
+        _gameData.Lumina.FileExists(gamePath) || Revision(gamePath) > 0;
+
     /// <summary>True when the effective asset was modified (session copy, or a live-edited mod file).</summary>
     public bool IsModified(string gamePath) =>
         _link.IsLinked ? _link.IsChanged(gamePath) : _session.GetRevision(gamePath) > 0;
