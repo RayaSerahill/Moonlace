@@ -94,7 +94,7 @@
                                Text="{Binding Penumbra.OptionsPanelTitle}" />
                     <TextBlock DockPanel.Dock="Top" Classes="dim" FontSize="12" TextWrapping="Wrap"
                                Margin="0,6,0,12"
-                               Text="Choose which of the mod's options Moonlace edits through. You can change this later from the Penumbra menu — files already edited keep their edits." />
+                               Text="Choose which of the mod's options Moonlace edits through. You can change this later from the Penumbra menu files already edited keep their edits." />
 
                     <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" Spacing="8"
                                 HorizontalAlignment="Right" Margin="0,14,0,0">
@@ -164,7 +164,7 @@
                 <StackPanel Spacing="10">
                     <TextBlock Classes="title" FontSize="16" Text="New option" />
                     <TextBlock Classes="dim" FontSize="12" TextWrapping="Wrap"
-                               Text="The option starts empty and becomes the edit target: only assets you edit from now on are stored in it. Everything else keeps coming from the mod's always-active default files — the option does not need to duplicate them." />
+                               Text="The option starts empty and becomes the edit target: only assets you edit from now on are stored in it. Everything else keeps coming from the mod's always-active default files the option does not need to duplicate them." />
 
                     <CheckBox Content="Create a new group" FontSize="12"
                               IsChecked="{Binding Penumbra.CreateNewGroup}"
@@ -254,13 +254,13 @@
             <Border VerticalAlignment="Center" HorizontalAlignment="Center"
                     Background="{StaticResource MoonPanelBrush}"
                     BorderBrush="{StaticResource MoonBorderBrush}" BorderThickness="1"
-                    CornerRadius="12" Padding="24,20" Width="560" MaxHeight="680">
+                    CornerRadius="12" Padding="24,20" Width="780" MaxHeight="680">
                 <DockPanel>
                     <TextBlock DockPanel.Dock="Top" Classes="title" FontSize="16" Text="Retarget mod" />
                     <TextBlock DockPanel.Dock="Top" Classes="dim" FontSize="12" Margin="0,2,0,0"
                                Text="{Binding ModTools.ModName}" TextTrimming="CharacterEllipsis" />
                     <TextBlock DockPanel.Dock="Top" Classes="dim" FontSize="12" TextWrapping="Wrap" Margin="0,6,0,10"
-                               Text="Pick which of the mod's models to rewire, then the item and race/gender it should apply to instead. A new .pmp is saved — the selected modpack itself is not touched." />
+                               Text="Give each affected model a new target on the right; models left unchanged are carried as they are. A new .pmp is saved, the selected modpack itself is not touched." />
 
                     <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" Spacing="8"
                                 HorizontalAlignment="Right" Margin="0,14,0,0">
@@ -281,49 +281,64 @@
                                Text="{Binding ModTools.ResultText}"
                                IsVisible="{Binding ModTools.ResultText, Converter={x:Static ObjectConverters.IsNotNull}}" />
 
-                    <StackPanel Spacing="6">
-                        <TextBlock Text="Modded models" FontWeight="SemiBold" FontSize="13" />
-                        <TextBlock Classes="dim" FontSize="12" TextWrapping="Wrap"
-                                   Text="This mod contains no retargetable gear models (weapons and body parts cannot be retargeted)."
-                                   IsVisible="{Binding !ModTools.HasBindings}" />
-                        <ListBox MaxHeight="120" FontSize="12"
-                                 IsVisible="{Binding ModTools.HasBindings}"
-                                 ItemsSource="{Binding ModTools.Bindings}"
-                                 SelectedItem="{Binding ModTools.SelectedBinding}">
-                            <ListBox.ItemTemplate>
-                                <DataTemplate x:DataType="modtools:ModBinding">
-                                    <TextBlock Text="{Binding Label}" FontSize="12" TextTrimming="CharacterEllipsis" />
-                                </DataTemplate>
-                            </ListBox.ItemTemplate>
-                        </ListBox>
+                    <TextBlock Classes="dim" FontSize="12" TextWrapping="Wrap"
+                               Text="This mod contains no retargetable gear models (weapons and body parts cannot be retargeted)."
+                               IsVisible="{Binding !ModTools.HasBindings}" />
 
-                        <TextBlock Text="New destination" FontWeight="SemiBold" FontSize="13" Margin="0,8,0,0"
-                                   IsVisible="{Binding ModTools.HasBindings}" />
-                        <TextBox Watermark="Search items (same equip slot)" FontSize="12"
-                                 IsVisible="{Binding ModTools.HasBindings}"
-                                 Text="{Binding ModTools.DestinationSearch}" />
-                        <ListBox MaxHeight="140" FontSize="12"
-                                 IsVisible="{Binding ModTools.HasBindings}"
-                                 ItemsSource="{Binding ModTools.DestinationChoices}"
-                                 SelectedItem="{Binding ModTools.SelectedDestination}">
-                            <ListBox.ItemTemplate>
-                                <DataTemplate x:DataType="vm:DestinationChoice">
-                                    <TextBlock Text="{Binding Label}" FontSize="12" TextTrimming="CharacterEllipsis" />
-                                </DataTemplate>
-                            </ListBox.ItemTemplate>
-                        </ListBox>
-                        <ComboBox HorizontalAlignment="Stretch" FontSize="12"
-                                  IsVisible="{Binding ModTools.HasBindings}"
-                                  PlaceholderText="Race / gender"
-                                  ItemsSource="{Binding ModTools.DestinationRaces}"
-                                  SelectedItem="{Binding ModTools.SelectedDestinationRace}">
-                            <ComboBox.ItemTemplate>
-                                <DataTemplate x:DataType="res:RaceVariant">
-                                    <TextBlock Text="{Binding Label}" FontSize="12" />
-                                </DataTemplate>
-                            </ComboBox.ItemTemplate>
-                        </ComboBox>
-                    </StackPanel>
+                    <Grid ColumnDefinitions="330,16,*" IsVisible="{Binding ModTools.HasBindings}">
+                        <!-- Left: every model the mod affects, with its assigned target -->
+                        <DockPanel Grid.Column="0">
+                            <TextBlock DockPanel.Dock="Top" Text="Affected models" FontWeight="SemiBold"
+                                       FontSize="13" Margin="0,0,0,6" />
+                            <ListBox FontSize="12" MaxHeight="360"
+                                     ItemsSource="{Binding ModTools.Assignments}"
+                                     SelectedItem="{Binding ModTools.SelectedAssignment}">
+                                <ListBox.ItemTemplate>
+                                    <DataTemplate x:DataType="vm:RetargetAssignmentViewModel">
+                                        <StackPanel Spacing="2">
+                                            <TextBlock Text="{Binding BindingLabel}" FontSize="12"
+                                                       TextTrimming="CharacterEllipsis" />
+                                            <TextBlock Text="{Binding TargetLabel}" FontSize="11"
+                                                       Foreground="{StaticResource MoonAccentDimBrush}"
+                                                       TextTrimming="CharacterEllipsis" />
+                                        </StackPanel>
+                                    </DataTemplate>
+                                </ListBox.ItemTemplate>
+                            </ListBox>
+                        </DockPanel>
+
+                        <!-- Right: the selected model's new target -->
+                        <DockPanel Grid.Column="2">
+                            <TextBlock DockPanel.Dock="Top" Text="New target for the selected model"
+                                       FontWeight="SemiBold" FontSize="13" Margin="0,0,0,6" />
+                            <StackPanel Spacing="6">
+                                <TextBox Watermark="Search items (same equip slot)" FontSize="12"
+                                         Text="{Binding ModTools.DestinationSearch}" />
+                                <ListBox MaxHeight="220" FontSize="12"
+                                         ItemsSource="{Binding ModTools.DestinationChoices}"
+                                         SelectedItem="{Binding ModTools.SelectedDestination}">
+                                    <ListBox.ItemTemplate>
+                                        <DataTemplate x:DataType="vm:DestinationChoice">
+                                            <TextBlock Text="{Binding Label}" FontSize="12"
+                                                       TextTrimming="CharacterEllipsis" />
+                                        </DataTemplate>
+                                    </ListBox.ItemTemplate>
+                                </ListBox>
+                                <ComboBox HorizontalAlignment="Stretch" FontSize="12"
+                                          PlaceholderText="Race / gender"
+                                          ItemsSource="{Binding ModTools.DestinationRaces}"
+                                          SelectedItem="{Binding ModTools.SelectedDestinationRace}">
+                                    <ComboBox.ItemTemplate>
+                                        <DataTemplate x:DataType="res:RaceVariant">
+                                            <TextBlock Text="{Binding Label}" FontSize="12" />
+                                        </DataTemplate>
+                                    </ComboBox.ItemTemplate>
+                                </ComboBox>
+                                <Button Content="Leave unchanged" FontSize="12" HorizontalAlignment="Right"
+                                        Command="{Binding ModTools.ClearAssignmentCommand}" />
+                            </StackPanel>
+                        </DockPanel>
+                    </Grid>
                 </DockPanel>
             </Border>
         </Border>
