@@ -312,7 +312,7 @@
                             <TextBlock DockPanel.Dock="Top" Text="New target for the selected model"
                                        FontWeight="SemiBold" FontSize="13" Margin="0,0,0,6" />
                             <StackPanel Spacing="6">
-                                <TextBox Watermark="Search items (same equip slot)" FontSize="12"
+                                <TextBox Watermark="Search items (same slot listed first)" FontSize="12"
                                          Text="{Binding ModTools.DestinationSearch}" />
                                 <ListBox MaxHeight="220" FontSize="12"
                                          ItemsSource="{Binding ModTools.DestinationChoices}"

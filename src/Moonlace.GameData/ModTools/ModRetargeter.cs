@@ -257,6 +257,13 @@ public sealed partial class ModRetargeter
 
                 var plans = assignments.Select(BuildPlan).ToArray();
                 report.AssignmentLabels.AddRange(plans.Select(p => p.Label));
+                foreach (var plan in plans.Where(p => p.Assignment.Destination.Slot != p.Binding.Slot))
+                {
+                    report.Warnings.Add(
+                        $"{plan.Binding.ItemsLabel} moves from the {plan.Binding.Slot} slot to " +
+                        $"{plan.Assignment.Destination.Slot}: the meshes keep their {plan.Binding.Slot} " +
+                        "rigging and may sit oddly on the new slot.");
+                }
                 var planByPath = new Dictionary<string, RetargetPlan>(StringComparer.Ordinal);
                 foreach (var plan in plans)
                 {
@@ -343,12 +350,10 @@ public sealed partial class ModRetargeter
         var (binding, destination, raceCode) = assignment;
         if (destination.IsWeapon || destination.IsBodyPart)
             throw new ModRetargetException("Only equipment and accessory items can be retarget destinations.");
-        if (destination.Slot != binding.Slot)
-            throw new ModRetargetException(
-                $"{binding.ItemsLabel} must move to an item of the same equip slot ({binding.Slot}).");
         if (raceCode.Length != 4 || !raceCode.All(char.IsAsciiDigit))
             throw new ModRetargetException($"\"{raceCode}\" is not a race/gender code (e.g. 0801).");
-        if (AssetPathResolver.SetCode(destination) == binding.SetCode && raceCode == binding.RaceCode)
+        if (AssetPathResolver.SetCode(destination) == binding.SetCode && raceCode == binding.RaceCode
+            && destination.Slot == binding.Slot)
             throw new ModRetargetException(
                 $"{binding.ItemsLabel} already targets {destination.Name} ({RaceLabelOf(raceCode)}); nothing to change.");
     }
@@ -381,8 +386,14 @@ public sealed partial class ModRetargeter
         var dstKind = destination.IsAccessory ? "accessory" : "equipment";
         var srcDir = $"chara/{srcKind}/{binding.SetCode}/";
         var dstDir = $"chara/{dstKind}/{dstSet}/";
-        var srcToken = $"c{binding.RaceCode}{binding.SetCode}";
-        var dstToken = $"c{destRaceCode}{dstSet}";
+
+        // The rename token includes the slot suffix so a binding can move
+        // across slots, gear and accessories alike. Every part is fixed
+        // width (c#### + [ea]#### + 3-letter suffix), which keeps the
+        // in-place .mdl string patch byte-exact.
+        var dstSuffix = AssetPathResolver.SlotSuffix(destination.Slot);
+        var srcToken = $"c{binding.RaceCode}{binding.SetCode}_{binding.SlotSuffix}";
+        var dstToken = $"c{destRaceCode}{dstSet}_{dstSuffix}";
         var destMaterialSet = DestinationMaterialSet(destination);
 
         // Where each of the binding's files lands on the destination's paths.
@@ -401,14 +412,16 @@ public sealed partial class ModRetargeter
         var context = new RetargetContext(
             SrcToken: srcToken,
             DstToken: dstToken,
+            BareSrcToken: $"c{binding.RaceCode}{binding.SetCode}",
+            BareDstToken: $"c{destRaceCode}{dstSet}",
             SrcRace: binding.RaceCode,
             DstRace: destRaceCode,
             SrcResolved: new ResolvedModelInfo(
-                $"chara/{srcKind}/{binding.SetCode}/model/{srcToken}_{binding.SlotSuffix}.mdl",
+                $"chara/{srcKind}/{binding.SetCode}/model/{srcToken}.mdl",
                 $"chara/{srcKind}/{binding.SetCode}/material",
                 SourceMaterialSet(binding)),
             DstResolved: new ResolvedModelInfo(
-                $"chara/{dstKind}/{dstSet}/model/{dstToken}_{binding.SlotSuffix}.mdl",
+                $"chara/{dstKind}/{dstSet}/model/{dstToken}.mdl",
                 $"chara/{dstKind}/{dstSet}/material",
                 destMaterialSet),
             PathMap: pathMap,
@@ -432,6 +445,8 @@ public sealed partial class ModRetargeter
     private sealed record RetargetContext(
         string SrcToken,
         string DstToken,
+        string BareSrcToken,
+        string BareDstToken,
         string SrcRace,
         string DstRace,
         ResolvedModelInfo SrcResolved,
@@ -464,6 +479,18 @@ public sealed partial class ModRetargeter
             if (name.Contains(ctx.SrcToken, StringComparison.Ordinal))
             {
                 var renamed = name.Replace(ctx.SrcToken, ctx.DstToken, StringComparison.Ordinal);
+                renames[name] = renamed;
+                if (!ctx.ProvidedMaterialNames.Contains(name))
+                    PullGameMaterial(name, renamed, ctx, pulled, warnings);
+                continue;
+            }
+
+            // Item material with a different slot suffix (a cross-slot
+            // reference inside the set): move only the race+set part and
+            // keep its own suffix.
+            if (name.Contains(ctx.BareSrcToken, StringComparison.Ordinal))
+            {
+                var renamed = name.Replace(ctx.BareSrcToken, ctx.BareDstToken, StringComparison.Ordinal);
                 renames[name] = renamed;
                 if (!ctx.ProvidedMaterialNames.Contains(name))
                     PullGameMaterial(name, renamed, ctx, pulled, warnings);
