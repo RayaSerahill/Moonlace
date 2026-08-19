@@ -72,7 +72,7 @@ public sealed class BrowserViewModelTests
         var link = new Moonlace.Core.Penumbra.PenumbraLinkService(NullLogger<Moonlace.Core.Penumbra.PenumbraLinkService>.Instance);
         var assets = new Moonlace.GameData.EffectiveAssetProvider(lumina, session, link);
         var resolver = new Moonlace.GameData.Resolution.AssetPathResolver(
-            lumina, NullLogger<Moonlace.GameData.Resolution.AssetPathResolver>.Instance);
+            lumina, assets, NullLogger<Moonlace.GameData.Resolution.AssetPathResolver>.Instance);
         var textures = new Moonlace.GameData.TextureDecoder(
             lumina, assets, NullLogger<Moonlace.GameData.TextureDecoder>.Instance);
         var editing = new Moonlace.GameData.Editing.ItemEditingService(

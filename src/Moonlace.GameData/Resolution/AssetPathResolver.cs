@@ -12,6 +12,7 @@ namespace Moonlace.GameData.Resolution;
 public sealed partial class AssetPathResolver
 {
     private readonly LuminaGameDataService _gameData;
+    private readonly EffectiveAssetProvider _assets;
     private readonly ILogger<AssetPathResolver> _logger;
 
     /// <summary>
@@ -49,9 +50,10 @@ public sealed partial class AssetPathResolver
     /// </summary>
     public volatile string? PreferredRaceCode;
 
-    public AssetPathResolver(LuminaGameDataService gameData, ILogger<AssetPathResolver> logger)
+    public AssetPathResolver(LuminaGameDataService gameData, EffectiveAssetProvider assets, ILogger<AssetPathResolver> logger)
     {
         _gameData = gameData;
+        _assets = assets;
         _logger = logger;
     }
 
@@ -79,7 +81,11 @@ public sealed partial class AssetPathResolver
         return new ResolvedModelInfo(mdlPath, materialBase, materialSet);
     }
 
-    /// <summary>Model versions (race variants) that exist for this item's equipment/accessory model.</summary>
+    /// <summary>
+    /// Model versions (race variants) that exist for this item's
+    /// equipment/accessory model — game-shipped ones and versions that exist
+    /// only as edits (session copy or linked-mod file).
+    /// </summary>
     public IReadOnlyList<RaceVariant> GetAvailableVariants(EquipmentItem item)
     {
         // Weapons have no race variants; a body part's race is its identity.
@@ -89,13 +95,53 @@ public sealed partial class AssetPathResolver
         var set = SetCode(item);
         var suffix = SlotSuffix(item.Slot);
         return RaceTable
-            .Where(race => _gameData.Lumina.FileExists(EquipmentMdlPath(item, set, race.Code, suffix)))
+            .Where(race => _assets.FileExists(EquipmentMdlPath(item, set, race.Code, suffix)))
             .Select(race => new RaceVariant(race.Code, race.Label))
             .ToArray();
     }
 
+    /// <summary>Race/gender combinations this item has no model version for yet — the creatable ones.</summary>
+    public IReadOnlyList<RaceVariant> GetMissingVariants(EquipmentItem item)
+    {
+        if (item.IsWeapon || item.IsBodyPart)
+            return [];
+
+        var set = SetCode(item);
+        var suffix = SlotSuffix(item.Slot);
+        return RaceTable
+            .Where(race => !_assets.FileExists(EquipmentMdlPath(item, set, race.Code, suffix)))
+            .Select(race => new RaceVariant(race.Code, race.Label))
+            .ToArray();
+    }
+
+    /// <summary>The equipment/accessory model path a given race code uses, whether or not it exists.</summary>
+    public string GetEquipmentModelPath(EquipmentItem item, string raceCode)
+    {
+        if (item.IsWeapon || item.IsBodyPart)
+            throw new ArgumentException("Only equipment and accessories have race-coded model paths.", nameof(item));
+        return EquipmentMdlPath(item, SetCode(item), raceCode, SlotSuffix(item.Slot));
+    }
+
+    /// <summary>
+    /// Resolves an equipment/accessory item for one specific race code,
+    /// ignoring <see cref="PreferredRaceCode"/>. Throws when that version
+    /// does not exist (not even as an edit).
+    /// </summary>
+    public ResolvedModelInfo ResolveForRace(EquipmentItem item, string raceCode)
+    {
+        var mdlPath = GetEquipmentModelPath(item, raceCode);
+        if (!_assets.FileExists(mdlPath))
+            throw new AssetNotFoundException($"No c{raceCode} model version exists: {mdlPath}");
+
+        var set = SetCode(item);
+        var kind = item.IsAccessory ? "accessory" : "equipment";
+        var imcPath = $"chara/{kind}/{set}/{set}.imc";
+        var materialSet = LookupMaterialSet(imcPath, SlotImcPart(item.Slot), item.Variant);
+        return new ResolvedModelInfo(mdlPath, $"chara/{kind}/{set}/material", materialSet);
+    }
+
     /// <summary>"e0119" for gear, "a0053" for accessories.</summary>
-    private static string SetCode(EquipmentItem item) =>
+    internal static string SetCode(EquipmentItem item) =>
         $"{(item.IsAccessory ? 'a' : 'e')}{item.ModelId:D4}";
 
     private static string EquipmentMdlPath(EquipmentItem item, string set, string race, string suffix) =>
@@ -134,7 +180,7 @@ public sealed partial class AssetPathResolver
         if (preferred is not null)
         {
             var candidate = EquipmentMdlPath(item, set, preferred, suffix);
-            if (_gameData.Lumina.FileExists(candidate))
+            if (_assets.FileExists(candidate))
                 mdlPath = candidate;
             else
                 _logger.LogWarning("No c{Race} model for {Item}; falling back to probe order", preferred, set);
@@ -145,7 +191,7 @@ public sealed partial class AssetPathResolver
             foreach (var (race, _) in RaceTable)
             {
                 var candidate = EquipmentMdlPath(item, set, race, suffix);
-                if (_gameData.Lumina.FileExists(candidate))
+                if (_assets.FileExists(candidate))
                 {
                     mdlPath = candidate;
                     break;
@@ -220,10 +266,10 @@ public sealed partial class AssetPathResolver
             // materials sit flat in material/. Prefer whichever exists.
             var materialDir = $"chara/human/c{race}/obj/{partDir}/{partLetter}{partId}/material";
             var versioned = $"{materialDir}/v0001{materialName}";
-            if (_gameData.Lumina.FileExists(versioned))
+            if (_assets.FileExists(versioned))
                 return versioned;
             var flat = $"{materialDir}{materialName}";
-            return _gameData.Lumina.FileExists(flat) ? flat : versioned;
+            return _assets.FileExists(flat) ? flat : versioned;
         }
 
         return $"{model.MaterialBasePath}/v{model.MaterialSet:D4}{materialName}";
