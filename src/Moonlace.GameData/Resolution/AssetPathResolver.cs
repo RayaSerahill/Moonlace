@@ -42,6 +42,14 @@ public sealed partial class AssetPathResolver
         ("1801", "Viera ♀"),
     ];
 
+    /// <summary>Every known race/gender code with its display label, for destination pickers.</summary>
+    public static IReadOnlyList<RaceVariant> KnownRaces { get; } =
+        RaceTable.Select(r => new RaceVariant(r.Code, r.Label)).ToArray();
+
+    /// <summary>"0101" for male race codes, "0201" for female — the bodies whose skin materials always exist.</summary>
+    internal static string GenderBaseRace(string raceCode) =>
+        raceCode.Length == 4 && int.TryParse(raceCode[..2], out var race) && race % 2 == 0 ? "0201" : "0101";
+
     /// <summary>
     /// The race code (e.g. "0801") equipment resolution should use. Null
     /// falls back to probe order. Set from the UI's model-version selector;
@@ -278,7 +286,7 @@ public sealed partial class AssetPathResolver
     [System.Text.RegularExpressions.GeneratedRegex(@"^/mt_c(\d{4})([bfhtz])(\d{4})_")]
     private static partial System.Text.RegularExpressions.Regex BodyPartMaterialRegex();
 
-    private static string SlotSuffix(EquipSlot slot) => slot switch
+    internal static string SlotSuffix(EquipSlot slot) => slot switch
     {
         EquipSlot.Head => "met",
         EquipSlot.Body => "top",
@@ -291,6 +299,22 @@ public sealed partial class AssetPathResolver
         EquipSlot.RightRing => "rir",
         EquipSlot.LeftRing => "ril",
         _ => throw new ArgumentOutOfRangeException(nameof(slot)),
+    };
+
+    /// <summary>The equip slot a model file-name suffix stands for, or null for an unknown suffix.</summary>
+    internal static EquipSlot? SlotFromSuffix(string suffix) => suffix switch
+    {
+        "met" => EquipSlot.Head,
+        "top" => EquipSlot.Body,
+        "glv" => EquipSlot.Hands,
+        "dwn" => EquipSlot.Legs,
+        "sho" => EquipSlot.Feet,
+        "ear" => EquipSlot.Ears,
+        "nek" => EquipSlot.Neck,
+        "wrs" => EquipSlot.Wrists,
+        "rir" => EquipSlot.RightRing,
+        "ril" => EquipSlot.LeftRing,
+        _ => null,
     };
 
     private static int SlotImcPart(EquipSlot slot) => slot switch

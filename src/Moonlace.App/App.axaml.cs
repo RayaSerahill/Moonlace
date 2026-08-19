@@ -90,6 +90,7 @@ public partial class App : Application
         services.AddSingleton<Moonlace.GameData.Editing.ItemEditingService>();
         services.AddSingleton<Moonlace.GameData.Upgrade.DawntrailModUpgrader>();
         services.AddSingleton<Moonlace.GameData.Import.ModpackImporter>();
+        services.AddSingleton<Moonlace.GameData.ModTools.ModRetargeter>();
 
         // App
         services.AddSingleton<IFolderPickerService, FolderPickerService>();
@@ -97,6 +98,7 @@ public partial class App : Application
         services.AddSingleton<SetupViewModel>();
         services.AddSingleton<PenumbraViewModel>();
         services.AddSingleton<FilesViewModel>();
+        services.AddSingleton<ModToolsViewModel>();
         services.AddSingleton<EditorViewModel>();
         services.AddSingleton<BrowserViewModel>();
         services.AddSingleton<MainWindowViewModel>();

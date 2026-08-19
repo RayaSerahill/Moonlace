@@ -36,8 +36,6 @@ public static class PmpExporter
         var entries = session.Entries;
         if (entries.Count == 0)
             throw new PmpExportException("The current session has no changes — there is nothing to export.");
-        if (string.IsNullOrWhiteSpace(metadata.Name))
-            throw new PmpExportException("The mod needs a name.");
 
         var files = new Dictionary<string, byte[]>(StringComparer.Ordinal);
         foreach (var entry in entries)
@@ -47,6 +45,20 @@ public static class PmpExporter
                     $"Session data for \"{entry.GamePath}\" is missing. Discard the session and redo the change.");
             files[entry.GamePath] = bytes;
         }
+
+        Export(files, metadata, outputPath);
+    }
+
+    /// <summary>Packages an explicit game-path → bytes map as a .pmp (used by the mod tools).</summary>
+    public static void Export(
+        IReadOnlyDictionary<string, byte[]> files,
+        PmpMetadata metadata,
+        string outputPath)
+    {
+        if (files.Count == 0)
+            throw new PmpExportException("There are no files to package.");
+        if (string.IsNullOrWhiteSpace(metadata.Name))
+            throw new PmpExportException("The mod needs a name.");
 
         var meta = new Dictionary<string, object>
         {

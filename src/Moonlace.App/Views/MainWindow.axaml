@@ -1,6 +1,8 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:vm="using:Moonlace.App.ViewModels"
+        xmlns:modtools="using:Moonlace.GameData.ModTools"
+        xmlns:res="using:Moonlace.GameData.Resolution"
         x:Class="Moonlace.App.Views.MainWindow"
         x:DataType="vm:MainWindowViewModel"
         Title="Moonlace"
@@ -20,6 +22,10 @@
                                       Command="{Binding Files.ImportModCommand}" />
                             <MenuItem Header="Upgrade to DT…"
                                       Command="{Binding Files.UpgradeToDtCommand}" />
+                        </MenuItem>
+                        <MenuItem Header="Mod tools" FontSize="13">
+                            <MenuItem Header="Retarget mod…"
+                                      Command="{Binding ModTools.OpenRetargetCommand}" />
                         </MenuItem>
                         <MenuItem Header="Penumbra" FontSize="13">
                             <MenuItem Header="Live edit…"
@@ -51,6 +57,9 @@
                         <TextBlock FontSize="12" Foreground="#E89B9B" VerticalAlignment="Center"
                                    Text="{Binding Penumbra.ErrorText}" TextTrimming="CharacterEllipsis" MaxWidth="420"
                                    IsVisible="{Binding Penumbra.ErrorText, Converter={x:Static ObjectConverters.IsNotNull}}" />
+                        <TextBlock FontSize="12" Foreground="#E89B9B" VerticalAlignment="Center"
+                                   Text="{Binding ModTools.ErrorText}" TextTrimming="CharacterEllipsis" MaxWidth="420"
+                                   IsVisible="{Binding ModTools.ErrorText, Converter={x:Static ObjectConverters.IsNotNull}}" />
                         <Border Background="{StaticResource MoonAccentDimBrush}" CornerRadius="999" Padding="10,3"
                                 IsVisible="{Binding Penumbra.IsLinked}">
                             <TextBlock FontSize="11" FontWeight="SemiBold" Foreground="#221A1F"
@@ -85,7 +94,7 @@
                                Text="{Binding Penumbra.OptionsPanelTitle}" />
                     <TextBlock DockPanel.Dock="Top" Classes="dim" FontSize="12" TextWrapping="Wrap"
                                Margin="0,6,0,12"
-                               Text="Choose which of the mod's options Moonlace edits through. You can change this later from the Penumbra menu — files already edited keep their edits." />
+                               Text="Choose which of the mod's options Moonlace edits through. You can change this later from the Penumbra menu files already edited keep their edits." />
 
                     <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" Spacing="8"
                                 HorizontalAlignment="Right" Margin="0,14,0,0">
@@ -155,7 +164,7 @@
                 <StackPanel Spacing="10">
                     <TextBlock Classes="title" FontSize="16" Text="New option" />
                     <TextBlock Classes="dim" FontSize="12" TextWrapping="Wrap"
-                               Text="The option starts empty and becomes the edit target: only assets you edit from now on are stored in it. Everything else keeps coming from the mod's always-active default files — the option does not need to duplicate them." />
+                               Text="The option starts empty and becomes the edit target: only assets you edit from now on are stored in it. Everything else keeps coming from the mod's always-active default files the option does not need to duplicate them." />
 
                     <CheckBox Content="Create a new group" FontSize="12"
                               IsChecked="{Binding Penumbra.CreateNewGroup}"
@@ -237,6 +246,111 @@
                                    Text="{Binding Files.WarningsText}" />
                     </ScrollViewer>
                 </DockPanel>
+            </Border>
+        </Border>
+
+        <!-- Mod tools: retarget mod -->
+        <Border Background="#C0141216" IsVisible="{Binding ModTools.IsRetargetPanelOpen}">
+            <Border VerticalAlignment="Center" HorizontalAlignment="Center"
+                    Background="{StaticResource MoonPanelBrush}"
+                    BorderBrush="{StaticResource MoonBorderBrush}" BorderThickness="1"
+                    CornerRadius="12" Padding="24,20" Width="780" MaxHeight="680">
+                <DockPanel>
+                    <TextBlock DockPanel.Dock="Top" Classes="title" FontSize="16" Text="Retarget mod" />
+                    <TextBlock DockPanel.Dock="Top" Classes="dim" FontSize="12" Margin="0,2,0,0"
+                               Text="{Binding ModTools.ModName}" TextTrimming="CharacterEllipsis" />
+                    <TextBlock DockPanel.Dock="Top" Classes="dim" FontSize="12" TextWrapping="Wrap" Margin="0,6,0,10"
+                               Text="Give each affected model a new target on the right; models left unchanged are carried as they are. A new .pmp is saved, the selected modpack itself is not touched." />
+
+                    <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" Spacing="8"
+                                HorizontalAlignment="Right" Margin="0,14,0,0">
+                        <Button Content="Close" Command="{Binding ModTools.CloseRetargetPanelCommand}" />
+                        <Button Classes="primary" Content="Save retargeted .pmp…"
+                                Command="{Binding ModTools.SaveRetargetedCommand}" />
+                    </StackPanel>
+
+                    <TextBlock DockPanel.Dock="Bottom" FontSize="12" Foreground="#E89B9B" TextWrapping="Wrap"
+                               Margin="0,8,0,0" Text="{Binding ModTools.ErrorText}"
+                               IsVisible="{Binding ModTools.ErrorText, Converter={x:Static ObjectConverters.IsNotNull}}" />
+                    <ScrollViewer DockPanel.Dock="Bottom" MaxHeight="80" Margin="0,8,0,0"
+                                  IsVisible="{Binding ModTools.WarningsText, Converter={x:Static ObjectConverters.IsNotNull}}">
+                        <TextBlock FontSize="11" Foreground="#E8C89B" TextWrapping="Wrap"
+                                   Text="{Binding ModTools.WarningsText}" />
+                    </ScrollViewer>
+                    <TextBlock DockPanel.Dock="Bottom" FontSize="12" TextWrapping="Wrap" Margin="0,8,0,0"
+                               Text="{Binding ModTools.ResultText}"
+                               IsVisible="{Binding ModTools.ResultText, Converter={x:Static ObjectConverters.IsNotNull}}" />
+
+                    <TextBlock Classes="dim" FontSize="12" TextWrapping="Wrap"
+                               Text="This mod contains no retargetable gear models (weapons and body parts cannot be retargeted)."
+                               IsVisible="{Binding !ModTools.HasBindings}" />
+
+                    <Grid ColumnDefinitions="330,16,*" IsVisible="{Binding ModTools.HasBindings}">
+                        <!-- Left: every model the mod affects, with its assigned target -->
+                        <DockPanel Grid.Column="0">
+                            <TextBlock DockPanel.Dock="Top" Text="Affected models" FontWeight="SemiBold"
+                                       FontSize="13" Margin="0,0,0,6" />
+                            <ListBox FontSize="12" MaxHeight="360"
+                                     ItemsSource="{Binding ModTools.Assignments}"
+                                     SelectedItem="{Binding ModTools.SelectedAssignment}">
+                                <ListBox.ItemTemplate>
+                                    <DataTemplate x:DataType="vm:RetargetAssignmentViewModel">
+                                        <StackPanel Spacing="2">
+                                            <TextBlock Text="{Binding BindingLabel}" FontSize="12"
+                                                       TextTrimming="CharacterEllipsis" />
+                                            <TextBlock Text="{Binding TargetLabel}" FontSize="11"
+                                                       Foreground="{StaticResource MoonAccentDimBrush}"
+                                                       TextTrimming="CharacterEllipsis" />
+                                        </StackPanel>
+                                    </DataTemplate>
+                                </ListBox.ItemTemplate>
+                            </ListBox>
+                        </DockPanel>
+
+                        <!-- Right: the selected model's new target -->
+                        <DockPanel Grid.Column="2">
+                            <TextBlock DockPanel.Dock="Top" Text="New target for the selected model"
+                                       FontWeight="SemiBold" FontSize="13" Margin="0,0,0,6" />
+                            <StackPanel Spacing="6">
+                                <TextBox Watermark="Search items (same slot listed first)" FontSize="12"
+                                         Text="{Binding ModTools.DestinationSearch}" />
+                                <ListBox MaxHeight="220" FontSize="12"
+                                         ItemsSource="{Binding ModTools.DestinationChoices}"
+                                         SelectedItem="{Binding ModTools.SelectedDestination}">
+                                    <ListBox.ItemTemplate>
+                                        <DataTemplate x:DataType="vm:DestinationChoice">
+                                            <TextBlock Text="{Binding Label}" FontSize="12"
+                                                       TextTrimming="CharacterEllipsis" />
+                                        </DataTemplate>
+                                    </ListBox.ItemTemplate>
+                                </ListBox>
+                                <ComboBox HorizontalAlignment="Stretch" FontSize="12"
+                                          PlaceholderText="Race / gender"
+                                          ItemsSource="{Binding ModTools.DestinationRaces}"
+                                          SelectedItem="{Binding ModTools.SelectedDestinationRace}">
+                                    <ComboBox.ItemTemplate>
+                                        <DataTemplate x:DataType="res:RaceVariant">
+                                            <TextBlock Text="{Binding Label}" FontSize="12" />
+                                        </DataTemplate>
+                                    </ComboBox.ItemTemplate>
+                                </ComboBox>
+                                <Button Content="Leave unchanged" FontSize="12" HorizontalAlignment="Right"
+                                        Command="{Binding ModTools.ClearAssignmentCommand}" />
+                            </StackPanel>
+                        </DockPanel>
+                    </Grid>
+                </DockPanel>
+            </Border>
+        </Border>
+
+        <!-- Mod tools: busy -->
+        <Border Background="#C0141216" IsVisible="{Binding ModTools.IsBusy}">
+            <Border VerticalAlignment="Center" HorizontalAlignment="Center"
+                    Background="{StaticResource MoonPanelBrush}" CornerRadius="999" Padding="20,10">
+                <StackPanel Orientation="Horizontal" Spacing="10">
+                    <ProgressBar IsIndeterminate="True" Width="120" Height="4" />
+                    <TextBlock Classes="dim" Text="{Binding ModTools.BusyText}" FontSize="12" />
+                </StackPanel>
             </Border>
         </Border>
 
