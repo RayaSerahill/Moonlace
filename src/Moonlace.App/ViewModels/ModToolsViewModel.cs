@@ -24,10 +24,41 @@ public sealed class DestinationChoice
 }
 
 /// <summary>
+/// One row of the retarget panel's left column: a modded model and the new
+/// target (item + race) the user has picked for it, if any.
+/// </summary>
+public partial class RetargetAssignmentViewModel : ObservableObject
+{
+    public RetargetAssignmentViewModel(ModBinding binding)
+    {
+        Binding = binding;
+    }
+
+    public ModBinding Binding { get; }
+
+    public string BindingLabel => Binding.Label;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(TargetLabel))]
+    [NotifyPropertyChangedFor(nameof(IsAssigned))]
+    private DestinationChoice? _destination;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(TargetLabel))]
+    private RaceVariant? _race;
+
+    public bool IsAssigned => Destination is not null;
+
+    public string TargetLabel => Destination is null
+        ? "→ unchanged"
+        : $"→ {Destination.Item.Name} · {Race?.Label ?? Binding.RaceLabel}";
+}
+
+/// <summary>
 /// The Mod tools menu in the top bar. "Retarget mod…" analyzes what gear a
-/// modpack binds to and rewires a chosen model onto a different item and/or
-/// race/gender, saved as a new standalone .pmp — the input modpack is never
-/// modified.
+/// modpack binds to and lets the user rewire each modded model onto its own
+/// new item and/or race/gender, saved together as a new standalone .pmp.
+/// The input modpack is never modified.
 /// </summary>
 public partial class ModToolsViewModel : ViewModelBase
 {
@@ -40,6 +71,7 @@ public partial class ModToolsViewModel : ViewModelBase
 
     private string? _modpackPath;
     private IReadOnlyList<EquipmentItem>? _allItems;
+    private bool _syncingSelection;
 
     [ObservableProperty]
     private bool _isRetargetPanelOpen;
@@ -47,14 +79,14 @@ public partial class ModToolsViewModel : ViewModelBase
     [ObservableProperty]
     private string _modName = "";
 
-    public ObservableCollection<ModBinding> Bindings { get; } = [];
+    /// <summary>Left column: every modded model with its (possibly empty) new target.</summary>
+    public ObservableCollection<RetargetAssignmentViewModel> Assignments { get; } = [];
 
     [ObservableProperty]
     private bool _hasBindings;
 
     [ObservableProperty]
-    [NotifyCanExecuteChangedFor(nameof(SaveRetargetedCommand))]
-    private ModBinding? _selectedBinding;
+    private RetargetAssignmentViewModel? _selectedAssignment;
 
     [ObservableProperty]
     private string _destinationSearch = "";
@@ -62,13 +94,11 @@ public partial class ModToolsViewModel : ViewModelBase
     public ObservableCollection<DestinationChoice> DestinationChoices { get; } = [];
 
     [ObservableProperty]
-    [NotifyCanExecuteChangedFor(nameof(SaveRetargetedCommand))]
     private DestinationChoice? _selectedDestination;
 
     public IReadOnlyList<RaceVariant> DestinationRaces { get; } = AssetPathResolver.KnownRaces;
 
     [ObservableProperty]
-    [NotifyCanExecuteChangedFor(nameof(SaveRetargetedCommand))]
     private RaceVariant? _selectedDestinationRace;
 
     [ObservableProperty]
@@ -99,10 +129,6 @@ public partial class ModToolsViewModel : ViewModelBase
         _logger = logger;
     }
 
-    partial void OnSelectedBindingChanged(ModBinding? value) => _ = RefreshDestinationsAsync();
-
-    partial void OnDestinationSearchChanged(string value) => _ = RefreshDestinationsAsync();
-
     [RelayCommand]
     private async Task OpenRetargetAsync()
     {
@@ -127,14 +153,13 @@ public partial class ModToolsViewModel : ViewModelBase
             ResultText = null;
             WarningsText = analysis.Notes.Count == 0 ? null : string.Join("\n", analysis.Notes);
 
-            Bindings.Clear();
+            Assignments.Clear();
             foreach (var binding in analysis.Bindings)
-                Bindings.Add(binding);
-            HasBindings = Bindings.Count > 0;
-            SelectedBinding = Bindings.FirstOrDefault();
-            SelectedDestinationRace = null;
-            DestinationSearch = "";
+                Assignments.Add(new RetargetAssignmentViewModel(binding));
+            HasBindings = Assignments.Count > 0;
+            SelectedAssignment = Assignments.FirstOrDefault();
             IsRetargetPanelOpen = true;
+            SaveRetargetedCommand.NotifyCanExecuteChanged();
         }
         catch (Exception ex)
         {
@@ -147,11 +172,54 @@ public partial class ModToolsViewModel : ViewModelBase
         }
     }
 
-    /// <summary>Items that can replace the selected binding: same equip slot, filtered by the search text.</summary>
+    /// <summary>Selecting a row on the left loads its stored target into the pickers on the right.</summary>
+    partial void OnSelectedAssignmentChanged(RetargetAssignmentViewModel? value)
+    {
+        _syncingSelection = true;
+        DestinationSearch = "";
+        SelectedDestinationRace = value?.Race;
+        _syncingSelection = false;
+        _ = RefreshDestinationsAsync();
+    }
+
+    partial void OnDestinationSearchChanged(string value)
+    {
+        if (!_syncingSelection)
+            _ = RefreshDestinationsAsync();
+    }
+
+    /// <summary>Picking an item on the right stores it on the selected row.</summary>
+    partial void OnSelectedDestinationChanged(DestinationChoice? value)
+    {
+        if (_syncingSelection || SelectedAssignment is not { } assignment)
+            return;
+
+        assignment.Destination = value;
+        // Picking an item without a race keeps the model's own race.
+        if (value is not null && assignment.Race is null)
+        {
+            var sourceRace = DestinationRaces.FirstOrDefault(r => r.Code == assignment.Binding.RaceCode);
+            _syncingSelection = true;
+            SelectedDestinationRace = sourceRace;
+            _syncingSelection = false;
+            assignment.Race = sourceRace;
+        }
+
+        SaveRetargetedCommand.NotifyCanExecuteChanged();
+    }
+
+    partial void OnSelectedDestinationRaceChanged(RaceVariant? value)
+    {
+        if (_syncingSelection || SelectedAssignment is not { } assignment)
+            return;
+        assignment.Race = value;
+    }
+
+    /// <summary>Items that can replace the selected model: same equip slot, filtered by the search text.</summary>
     private async Task RefreshDestinationsAsync()
     {
-        var binding = SelectedBinding;
-        if (binding is null)
+        var assignment = SelectedAssignment;
+        if (assignment is null)
         {
             DestinationChoices.Clear();
             SelectedDestination = null;
@@ -161,37 +229,77 @@ public partial class ModToolsViewModel : ViewModelBase
         _allItems ??= await _items.GetEquipmentItemsAsync();
         var search = DestinationSearch.Trim();
         var matches = _allItems
-            .Where(i => !i.IsWeapon && !i.IsBodyPart && i.Slot == binding.Slot)
+            .Where(i => !i.IsWeapon && !i.IsBodyPart && i.Slot == assignment.Binding.Slot)
             .Where(i => search.Length == 0 || i.Name.Contains(search, StringComparison.OrdinalIgnoreCase))
             .Take(MaxDestinationChoices)
             .ToArray();
 
         // The list may have been retriggered while items loaded; latest state wins.
-        if (!ReferenceEquals(binding, SelectedBinding))
+        if (!ReferenceEquals(assignment, SelectedAssignment))
             return;
 
-        var kept = SelectedDestination?.Item;
+        _syncingSelection = true;
         DestinationChoices.Clear();
         foreach (var item in matches)
             DestinationChoices.Add(new DestinationChoice { Item = item });
-        SelectedDestination = kept is null ? null : DestinationChoices.FirstOrDefault(c => c.Item.RowId == kept.RowId);
+
+        // Keep the row's stored target selected, even when the filter hides it.
+        var stored = assignment.Destination;
+        if (stored is not null)
+        {
+            var match = DestinationChoices.FirstOrDefault(c => c.Item.RowId == stored.Item.RowId);
+            if (match is null)
+                DestinationChoices.Insert(0, stored);
+            SelectedDestination = match ?? stored;
+        }
+        else
+        {
+            SelectedDestination = null;
+        }
+
+        _syncingSelection = false;
     }
 
-    private bool CanSaveRetargeted =>
-        !IsBusy && SelectedBinding is not null && SelectedDestination is not null && SelectedDestinationRace is not null;
+    /// <summary>Clears the selected row's target so its files are carried unchanged.</summary>
+    [RelayCommand]
+    private void ClearAssignment()
+    {
+        if (SelectedAssignment is not { } assignment)
+            return;
+
+        assignment.Destination = null;
+        assignment.Race = null;
+        _syncingSelection = true;
+        SelectedDestination = null;
+        SelectedDestinationRace = null;
+        _syncingSelection = false;
+        SaveRetargetedCommand.NotifyCanExecuteChanged();
+    }
+
+    private bool CanSaveRetargeted => !IsBusy && Assignments.Any(a => a.IsAssigned);
 
     [RelayCommand(CanExecute = nameof(CanSaveRetargeted))]
     private async Task SaveRetargetedAsync()
     {
-        if (_modpackPath is null || SelectedBinding is not { } binding
-            || SelectedDestination is not { } destination || SelectedDestinationRace is not { } race)
+        if (_modpackPath is null)
+            return;
+
+        var assignments = Assignments
+            .Where(a => a.Destination is not null)
+            .Select(a => new RetargetAssignment(
+                a.Binding,
+                a.Destination!.Item,
+                (a.Race ?? DestinationRaces.First(r => r.Code == a.Binding.RaceCode)).Code))
+            .ToArray();
+        if (assignments.Length == 0)
             return;
 
         ErrorText = null;
+        var suggestedName = assignments.Length == 1
+            ? $"{ModName} ({assignments[0].Destination.Name}).pmp"
+            : $"{ModName} (retargeted).pmp";
         var output = await _files.SaveFileAsync(
-            "Save retargeted modpack",
-            $"{ModName} ({destination.Item.Name}).pmp",
-            "Penumbra Mod Package", ["*.pmp"]);
+            "Save retargeted modpack", suggestedName, "Penumbra Mod Package", ["*.pmp"]);
         if (output is null)
             return;
 
@@ -199,7 +307,7 @@ public partial class ModToolsViewModel : ViewModelBase
         BusyText = "Retargeting mod…";
         try
         {
-            var report = await _retargeter.RetargetAsync(_modpackPath, binding, destination.Item, race.Code, output);
+            var report = await _retargeter.RetargetAsync(_modpackPath, assignments, output);
             ResultText = report.Summary() + $"\nSaved to {output}";
             WarningsText = report.Warnings.Count == 0 ? null : string.Join("\n", report.Warnings);
         }
@@ -219,7 +327,7 @@ public partial class ModToolsViewModel : ViewModelBase
 
     /// <summary>
     /// Dev/testing hook: runs the whole retarget flow headlessly from a spec
-    /// "modpack|destination item name|race code|output path", using the
+    /// "modpack|destination item name|race code|output path", assigning the
     /// modpack's first binding.
     /// </summary>
     public async Task RetargetHeadlessAsync(string spec)
@@ -232,7 +340,7 @@ public partial class ModToolsViewModel : ViewModelBase
         }
 
         await AnalyzeAsync(parts[0]);
-        if (SelectedBinding is not { } binding)
+        if (SelectedAssignment is not { } assignment)
         {
             ErrorText ??= "The modpack has no retargetable bindings.";
             return;
@@ -241,8 +349,12 @@ public partial class ModToolsViewModel : ViewModelBase
         try
         {
             _allItems ??= await _items.GetEquipmentItemsAsync();
-            var destination = _allItems.First(i => i.Name == parts[1] && i.Slot == binding.Slot);
-            var report = await _retargeter.RetargetAsync(parts[0], binding, destination, parts[2], parts[3]);
+            var destination = _allItems.First(i => i.Name == parts[1] && i.Slot == assignment.Binding.Slot);
+            assignment.Destination = new DestinationChoice { Item = destination };
+            assignment.Race = DestinationRaces.FirstOrDefault(r => r.Code == parts[2]);
+            SaveRetargetedCommand.NotifyCanExecuteChanged();
+            var report = await _retargeter.RetargetAsync(
+                parts[0], [new RetargetAssignment(assignment.Binding, destination, parts[2])], parts[3]);
             ResultText = report.Summary() + $"\nSaved to {parts[3]}";
             WarningsText = report.Warnings.Count == 0 ? null : string.Join("\n", report.Warnings);
             _logger.LogInformation("Headless retarget: {Summary}", report.Summary());

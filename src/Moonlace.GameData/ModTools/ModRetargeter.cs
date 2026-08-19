@@ -50,8 +50,11 @@ public sealed class ModBinding
     };
 
     public string Label =>
-        $"{ItemsLabel} — {Slot}, {RaceLabel} · {GamePaths.Count} file{(GamePaths.Count == 1 ? "" : "s")}";
+        $"{ItemsLabel} · {Slot} · {RaceLabel} · {GamePaths.Count} file{(GamePaths.Count == 1 ? "" : "s")}";
 }
+
+/// <summary>One retarget decision: this binding's files move onto that item and race.</summary>
+public sealed record RetargetAssignment(ModBinding Binding, EquipmentItem Destination, string RaceCode);
 
 public sealed class ModRetargetAnalysis
 {
@@ -69,9 +72,8 @@ public sealed class ModRetargetReport
 {
     public string ModName = "";
 
-    public string SourceLabel = "";
-
-    public string DestinationLabel = "";
+    /// <summary>One "source (race) → item (race)" line per assignment.</summary>
+    public List<string> AssignmentLabels = [];
 
     public int FilesRewired;
 
@@ -85,10 +87,10 @@ public sealed class ModRetargetReport
     {
         var parts = new List<string>
         {
-            $"{FilesRewired} file{(FilesRewired == 1 ? "" : "s")} rewired from {SourceLabel} to {DestinationLabel}",
+            $"{FilesRewired} file{(FilesRewired == 1 ? "" : "s")} rewired: {string.Join("; ", AssignmentLabels)}",
         };
         if (MaterialsPulledIn > 0)
-            parts.Add($"{MaterialsPulledIn} game material{(MaterialsPulledIn == 1 ? "" : "s")} pulled in to complete the model");
+            parts.Add($"{MaterialsPulledIn} game material{(MaterialsPulledIn == 1 ? "" : "s")} pulled in to complete the models");
         if (FilesCarried > 0)
             parts.Add($"{FilesCarried} other file{(FilesCarried == 1 ? "" : "s")} carried unchanged");
         return string.Join(" · ", parts) + ".";
@@ -96,14 +98,15 @@ public sealed class ModRetargetReport
 }
 
 /// <summary>
-/// Retargets a distributable modpack (.pmp / .ttmp2 / .ttmp) onto a different
-/// item and/or race/gender: redirect paths are remapped onto the destination's
-/// asset paths, the model's material names are re-coded in place, materials
-/// get their texture references rewritten, skin materials are repointed to the
-/// destination race (gender-base fallback), and item materials the model
-/// references but the mod does not ship are pulled from the game data so the
-/// result is complete. The output is a new standalone .pmp — the input
-/// modpack and the FFXIV installation are never modified.
+/// Retargets a distributable modpack (.pmp / .ttmp2 / .ttmp) onto different
+/// items and/or race/gender combinations, one assignment per modded model:
+/// redirect paths are remapped onto each destination's asset paths, model
+/// material names are re-coded in place, materials get their texture
+/// references rewritten, skin materials are repointed to the destination race
+/// (gender-base fallback), and item materials a model references but the mod
+/// does not ship are pulled from the game data so the result is complete.
+/// The output is a new standalone .pmp; the input modpack and the FFXIV
+/// installation are never modified.
 /// </summary>
 public sealed partial class ModRetargeter
 {
@@ -148,7 +151,7 @@ public sealed partial class ModRetargeter
             {
                 ct.ThrowIfCancellationRequested();
                 if (!ModPaths.LooksLikeGamePath(rawPath))
-                    continue; // Penumbra pseudo-key for an unused file — not effective content
+                    continue; // Penumbra pseudo-key for an unused file, not effective content
 
                 var path = rawPath.ToLowerInvariant();
                 var setMatch = SetDirRegex().Match(path);
@@ -200,9 +203,9 @@ public sealed partial class ModRetargeter
                 .ToArray();
 
             if (weaponFiles > 0)
-                notes.Add($"{weaponFiles} weapon file{(weaponFiles == 1 ? "" : "s")} — weapons cannot be retargeted and are carried unchanged.");
+                notes.Add($"{weaponFiles} weapon file{(weaponFiles == 1 ? "" : "s")}: weapons cannot be retargeted and are carried unchanged.");
             if (carried > weaponFiles)
-                notes.Add($"{carried - weaponFiles} file{(carried - weaponFiles == 1 ? " is" : "s are")} not race-coded gear assets (skin, IMC, VFX, …) and would be carried unchanged.");
+                notes.Add($"{carried - weaponFiles} file{(carried - weaponFiles == 1 ? " is" : "s are")} not race-coded gear assets (skin, IMC, VFX, ...) and would be carried unchanged.");
 
             _logger.LogInformation("Analyzed modpack \"{Mod}\": {Bindings} retargetable binding(s), {Carried} carried",
                 info.Name, bindings.Length, carried);
@@ -216,12 +219,7 @@ public sealed partial class ModRetargeter
         });
     }
 
-    /// <summary>
-    /// Rewires one binding of the modpack onto <paramref name="destination"/> +
-    /// <paramref name="destRaceCode"/> and writes the result as a new .pmp at
-    /// <paramref name="outputPath"/>. Files outside the binding are carried
-    /// through unchanged.
-    /// </summary>
+    /// <summary>Convenience overload for a single assignment.</summary>
     public Task<ModRetargetReport> RetargetAsync(
         string modpackPath,
         ModBinding binding,
@@ -229,79 +227,45 @@ public sealed partial class ModRetargeter
         string destRaceCode,
         string outputPath,
         CancellationToken ct = default)
+        => RetargetAsync(modpackPath, [new RetargetAssignment(binding, destination, destRaceCode)], outputPath, ct);
+
+    /// <summary>
+    /// Rewires each assigned binding of the modpack onto its own destination
+    /// item + race and writes the combined result as a new .pmp at
+    /// <paramref name="outputPath"/>. Bindings without an assignment and all
+    /// other files are carried through unchanged.
+    /// </summary>
+    public Task<ModRetargetReport> RetargetAsync(
+        string modpackPath,
+        IReadOnlyList<RetargetAssignment> assignments,
+        string outputPath,
+        CancellationToken ct = default)
     {
         return Task.Run(() =>
         {
-            if (destination.IsWeapon || destination.IsBodyPart)
-                throw new ModRetargetException("Only equipment and accessory items can be retarget destinations.");
-            if (destination.Slot != binding.Slot)
-                throw new ModRetargetException($"The destination must use the same equip slot as the modded model ({binding.Slot}).");
-            if (destRaceCode.Length != 4 || !destRaceCode.All(char.IsAsciiDigit))
-                throw new ModRetargetException($"\"{destRaceCode}\" is not a race/gender code (e.g. 0801).");
+            if (assignments.Count == 0)
+                throw new ModRetargetException("Assign at least one modded model a new target.");
+            if (assignments.Select(a => a.Binding).Distinct().Count() != assignments.Count)
+                throw new ModRetargetException("Each modded model can only have one new target.");
+            foreach (var assignment in assignments)
+                ValidateAssignment(assignment);
 
-            var dstSet = AssetPathResolver.SetCode(destination);
-            if (dstSet == binding.SetCode && destRaceCode == binding.RaceCode)
-                throw new ModRetargetException("The mod already targets that item and race — nothing to change.");
-
-            var report = new ModRetargetReport
-            {
-                SourceLabel = $"{binding.ItemsLabel} ({binding.RaceLabel})",
-                DestinationLabel = $"{destination.Name} ({RaceLabelOf(destRaceCode)})",
-            };
-
+            var report = new ModRetargetReport();
             return RunExtracted(modpackPath, report.Warnings, (info, effective, root) =>
             {
                 report.ModName = info.Name;
 
-                var srcKind = binding.IsAccessory ? "accessory" : "equipment";
-                var dstKind = destination.IsAccessory ? "accessory" : "equipment";
-                var srcDir = $"chara/{srcKind}/{binding.SetCode}/";
-                var dstDir = $"chara/{dstKind}/{dstSet}/";
-                var srcToken = $"c{binding.RaceCode}{binding.SetCode}";
-                var dstToken = $"c{destRaceCode}{dstSet}";
-                var destMaterialSet = DestinationMaterialSet(destination);
-
-                // Where each of the binding's files lands on the destination's paths.
-                var pathMap = new Dictionary<string, string>(StringComparer.Ordinal);
-                foreach (var path in binding.GamePaths)
+                var plans = assignments.Select(BuildPlan).ToArray();
+                report.AssignmentLabels.AddRange(plans.Select(p => p.Label));
+                var planByPath = new Dictionary<string, RetargetPlan>(StringComparer.Ordinal);
+                foreach (var plan in plans)
                 {
-                    var mapped = path.StartsWith(srcDir, StringComparison.Ordinal)
-                        ? dstDir + path[srcDir.Length..]
-                        : path;
-                    mapped = mapped.Replace(srcToken, dstToken, StringComparison.Ordinal);
-                    if (path.EndsWith(".mtrl", StringComparison.Ordinal))
-                        mapped = MaterialVersionDirRegex().Replace(mapped, $"/material/v{destMaterialSet:D4}/");
-                    pathMap[path] = mapped;
+                    foreach (var path in plan.Binding.GamePaths)
+                        planByPath[path] = plan;
                 }
 
-                var context = new RetargetContext(
-                    SrcToken: srcToken,
-                    DstToken: dstToken,
-                    SrcRace: binding.RaceCode,
-                    DstRace: destRaceCode,
-                    SrcResolved: new ResolvedModelInfo(
-                        $"chara/{srcKind}/{binding.SetCode}/model/{srcToken}_{binding.SlotSuffix}.mdl",
-                        $"chara/{srcKind}/{binding.SetCode}/material",
-                        SourceMaterialSet(binding)),
-                    DstResolved: new ResolvedModelInfo(
-                        $"chara/{dstKind}/{dstSet}/model/{dstToken}_{binding.SlotSuffix}.mdl",
-                        $"chara/{dstKind}/{dstSet}/material",
-                        destMaterialSet),
-                    PathMap: pathMap,
-                    ProvidedMaterialNames: new HashSet<string>(
-                        binding.GamePaths
-                            .Where(p => p.EndsWith(".mtrl", StringComparison.Ordinal))
-                            .Select(p => "/" + Path.GetFileName(p)),
-                        StringComparer.Ordinal));
-
-                var bindingPaths = new HashSet<string>(binding.GamePaths, StringComparer.Ordinal);
                 var files = new Dictionary<string, byte[]>(StringComparer.Ordinal);
                 var pulled = new Dictionary<string, byte[]>(StringComparer.Ordinal);
-                // Carried files of the same set fall in two groups: other
-                // model versions (their own bindings — no warning needed) and
-                // genuinely shared files without a race token.
-                var setTokenRegex = new Regex($@"c\d{{4}}{Regex.Escape(binding.SetCode)}_");
-                var setSharedCarried = 0;
 
                 foreach (var (rawPath, rel) in effective.OrderBy(kv => kv.Key, StringComparer.Ordinal))
                 {
@@ -314,13 +278,13 @@ public sealed partial class ModRetargeter
                     if (bytes is null)
                         continue;
 
-                    if (bindingPaths.Contains(path))
+                    if (planByPath.TryGetValue(path, out var plan))
                     {
-                        var mapped = pathMap[path];
+                        var mapped = plan.PathMap[path];
                         bytes = Path.GetExtension(path) switch
                         {
-                            ".mdl" => RetargetModel(bytes, context, pulled, report.Warnings),
-                            ".mtrl" => RewriteMaterialTextures(bytes, path, pathMap, report.Warnings),
+                            ".mdl" => RetargetModel(bytes, plan.Context, pulled, report.Warnings),
+                            ".mtrl" => RewriteMaterialTextures(bytes, path, plan.Context.PathMap, report.Warnings),
                             _ => bytes,
                         };
                         if (files.ContainsKey(mapped))
@@ -333,8 +297,15 @@ public sealed partial class ModRetargeter
                         if (!files.TryAdd(path, bytes))
                             report.Warnings.Add($"A retargeted file replaces the mod's own {path}.");
                         report.FilesCarried++;
-                        if (path.StartsWith(srcDir, StringComparison.Ordinal) && !setTokenRegex.IsMatch(path))
-                            setSharedCarried++;
+
+                        // Carried files of an assigned set fall in two groups:
+                        // other model versions (their own bindings, no warning
+                        // needed) and genuinely shared files without a race
+                        // token that keep affecting the original item.
+                        var sharedOf = plans.FirstOrDefault(p =>
+                            path.StartsWith(p.SrcDir, StringComparison.Ordinal) && !p.SetTokenRegex.IsMatch(path));
+                        if (sharedOf is not null)
+                            sharedOf.SetSharedCarried++;
                     }
                 }
 
@@ -344,23 +315,118 @@ public sealed partial class ModRetargeter
                         report.MaterialsPulledIn++;
                 }
 
-                if (setSharedCarried > 0)
+                foreach (var plan in plans.Where(p => p.SetSharedCarried > 0))
+                {
                     report.Warnings.Add(
-                        $"{setSharedCarried} file{(setSharedCarried == 1 ? "" : "s")} under {binding.SetCode} " +
-                        "carry no race code (IMC, VFX, …) — kept unchanged, still affecting the original item.");
-                if (report.FilesRewired == 0)
-                    throw new ModRetargetException("None of the mod's files matched the selected model — nothing to retarget.");
+                        $"{plan.SetSharedCarried} file{(plan.SetSharedCarried == 1 ? "" : "s")} under {plan.Binding.SetCode} " +
+                        "carry no race code (IMC, VFX, ...): kept unchanged, still affecting the original item.");
+                }
 
+                if (report.FilesRewired == 0)
+                    throw new ModRetargetException("None of the mod's files matched the assigned models; nothing to retarget.");
+
+                var destinationNames = plans.Select(p => p.Assignment.Destination.Name).Distinct().ToArray();
                 PmpExporter.Export(files, new PmpMetadata
                 {
-                    Name = $"{info.Name} → {destination.Name}",
-                    Description = $"Retargeted by Moonlace from {report.SourceLabel} to {report.DestinationLabel}.",
+                    Name = $"{info.Name} → {string.Join(" + ", destinationNames)}",
+                    Description = $"Retargeted by Moonlace: {string.Join("; ", report.AssignmentLabels)}.",
                 }, outputPath);
 
                 _logger.LogInformation("Retargeted \"{Mod}\": {Summary} → {Out}", info.Name, report.Summary(), outputPath);
                 return report;
             });
         }, ct);
+    }
+
+    private static void ValidateAssignment(RetargetAssignment assignment)
+    {
+        var (binding, destination, raceCode) = assignment;
+        if (destination.IsWeapon || destination.IsBodyPart)
+            throw new ModRetargetException("Only equipment and accessory items can be retarget destinations.");
+        if (destination.Slot != binding.Slot)
+            throw new ModRetargetException(
+                $"{binding.ItemsLabel} must move to an item of the same equip slot ({binding.Slot}).");
+        if (raceCode.Length != 4 || !raceCode.All(char.IsAsciiDigit))
+            throw new ModRetargetException($"\"{raceCode}\" is not a race/gender code (e.g. 0801).");
+        if (AssetPathResolver.SetCode(destination) == binding.SetCode && raceCode == binding.RaceCode)
+            throw new ModRetargetException(
+                $"{binding.ItemsLabel} already targets {destination.Name} ({RaceLabelOf(raceCode)}); nothing to change.");
+    }
+
+    /// <summary>Everything one assignment needs while files stream through: path map, rename context, warning counters.</summary>
+    private sealed class RetargetPlan
+    {
+        public required RetargetAssignment Assignment { get; init; }
+
+        public required string Label { get; init; }
+
+        public required Dictionary<string, string> PathMap { get; init; }
+
+        public required RetargetContext Context { get; init; }
+
+        public required string SrcDir { get; init; }
+
+        public required Regex SetTokenRegex { get; init; }
+
+        public int SetSharedCarried;
+
+        public ModBinding Binding => Assignment.Binding;
+    }
+
+    private RetargetPlan BuildPlan(RetargetAssignment assignment)
+    {
+        var (binding, destination, destRaceCode) = assignment;
+        var dstSet = AssetPathResolver.SetCode(destination);
+        var srcKind = binding.IsAccessory ? "accessory" : "equipment";
+        var dstKind = destination.IsAccessory ? "accessory" : "equipment";
+        var srcDir = $"chara/{srcKind}/{binding.SetCode}/";
+        var dstDir = $"chara/{dstKind}/{dstSet}/";
+        var srcToken = $"c{binding.RaceCode}{binding.SetCode}";
+        var dstToken = $"c{destRaceCode}{dstSet}";
+        var destMaterialSet = DestinationMaterialSet(destination);
+
+        // Where each of the binding's files lands on the destination's paths.
+        var pathMap = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var path in binding.GamePaths)
+        {
+            var mapped = path.StartsWith(srcDir, StringComparison.Ordinal)
+                ? dstDir + path[srcDir.Length..]
+                : path;
+            mapped = mapped.Replace(srcToken, dstToken, StringComparison.Ordinal);
+            if (path.EndsWith(".mtrl", StringComparison.Ordinal))
+                mapped = MaterialVersionDirRegex().Replace(mapped, $"/material/v{destMaterialSet:D4}/");
+            pathMap[path] = mapped;
+        }
+
+        var context = new RetargetContext(
+            SrcToken: srcToken,
+            DstToken: dstToken,
+            SrcRace: binding.RaceCode,
+            DstRace: destRaceCode,
+            SrcResolved: new ResolvedModelInfo(
+                $"chara/{srcKind}/{binding.SetCode}/model/{srcToken}_{binding.SlotSuffix}.mdl",
+                $"chara/{srcKind}/{binding.SetCode}/material",
+                SourceMaterialSet(binding)),
+            DstResolved: new ResolvedModelInfo(
+                $"chara/{dstKind}/{dstSet}/model/{dstToken}_{binding.SlotSuffix}.mdl",
+                $"chara/{dstKind}/{dstSet}/material",
+                destMaterialSet),
+            PathMap: pathMap,
+            ProvidedMaterialNames: new HashSet<string>(
+                binding.GamePaths
+                    .Where(p => p.EndsWith(".mtrl", StringComparison.Ordinal))
+                    .Select(p => "/" + Path.GetFileName(p)),
+                StringComparer.Ordinal));
+
+        return new RetargetPlan
+        {
+            Assignment = assignment,
+            Label = $"{binding.ItemsLabel} ({binding.RaceLabel}) → {destination.Name} ({RaceLabelOf(destRaceCode)})",
+            PathMap = pathMap,
+            Context = context,
+            SrcDir = srcDir,
+            SetTokenRegex = new Regex($@"c\d{{4}}{Regex.Escape(binding.SetCode)}_"),
+        };
     }
 
     private sealed record RetargetContext(
@@ -404,8 +470,8 @@ public sealed partial class ModRetargeter
                 continue;
             }
 
-            // Character material (skin, hair, …): repoint to the closest race
-            // the game ships materials for — skin only exists for the base
+            // Character material (skin, hair, ...): repoint to the closest race
+            // the game ships materials for. Skin only exists for the base
             // bodies (e.g. Miqo'te ♀ uses the c0201 skin).
             var human = BodyMaterialRegex().Match(name);
             if (!human.Success || ctx.DstRace == ctx.SrcRace)
@@ -437,7 +503,7 @@ public sealed partial class ModRetargeter
             if (chosen is not null)
                 renames[name] = chosen;
             else
-                warnings.Add($"No c{ctx.DstRace} equivalent for {name} — kept as-is.");
+                warnings.Add($"No c{ctx.DstRace} equivalent for {name}: kept as-is.");
         }
 
         return renames.Count == 0 ? mdl : MdlMaterialRenamer.RenameMaterials(mdl, n => renames.GetValueOrDefault(n));
@@ -450,7 +516,7 @@ public sealed partial class ModRetargeter
         var bytes = _gameData.Lumina.FileExists(sourcePath) ? _gameData.Lumina.GetFile(sourcePath)?.Data : null;
         if (bytes is null)
         {
-            warnings.Add($"The model references {name}, which is neither in the mod nor the game — it may render untextured.");
+            warnings.Add($"The model references {name}, which is neither in the mod nor the game; it may render untextured.");
             return;
         }
 
@@ -476,7 +542,7 @@ public sealed partial class ModRetargeter
         }
         catch (ArgumentException ex)
         {
-            warnings.Add($"Texture paths in {mtrlPath} could not be rewritten ({ex.Message}) — kept as-is.");
+            warnings.Add($"Texture paths in {mtrlPath} could not be rewritten ({ex.Message}): kept as-is.");
             return mtrl;
         }
     }
@@ -555,7 +621,7 @@ public sealed partial class ModRetargeter
         var file = Path.GetFullPath(ModPaths.ResolveCaseInsensitive(root, rel));
         if (!file.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.Ordinal))
         {
-            warnings.Add($"\"{rel}\" points outside the modpack — skipped.");
+            warnings.Add($"\"{rel}\" points outside the modpack: skipped.");
             return null;
         }
 

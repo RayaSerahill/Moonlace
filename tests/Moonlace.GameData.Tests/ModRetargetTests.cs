@@ -65,7 +65,7 @@ public sealed class ModRetargetTests : IDisposable
         return (resolver, session, builder, items, retargeter, importer, assets);
     }
 
-    /// <summary>A body item with a c0101 model — Abes Jacket (the canonical example) when present.</summary>
+    /// <summary>A body item with a c0101 model: Abes Jacket (the canonical example) when present.</summary>
     private static EquipmentItem PickSourceItem(IReadOnlyList<EquipmentItem> items, AssetPathResolver resolver)
     {
         var candidates = items.Where(i => !i.IsWeapon && !i.IsBodyPart && i.Slot == EquipSlot.Body).ToArray();
@@ -74,22 +74,18 @@ public sealed class ModRetargetTests : IDisposable
     }
 
     /// <summary>
-    /// Builds a .pmp from the source item's real c0101 game files: the model,
-    /// its race-coded textures, and (optionally) its item-owned materials.
+    /// The item's real c0101 game files: the model, its race-coded textures,
+    /// and (optionally) its item-owned materials.
     /// </summary>
-    private (string PmpPath, EquipmentItem Source, string SetToken, IReadOnlyList<string> GamePaths) CreateGearPmp(
-        (AssetPathResolver Resolver, SessionService Session, RenderModelBuilder Builder,
-            IReadOnlyList<EquipmentItem> Items, ModRetargeter Retargeter, ModpackImporter Importer,
-            EffectiveAssetProvider Assets) stack,
-        bool includeMaterials)
+    private static Dictionary<string, byte[]> CollectItemFiles(
+        AssetPathResolver resolver, EffectiveAssetProvider assets, EquipmentItem item, bool includeMaterials)
     {
-        var item = PickSourceItem(stack.Items, stack.Resolver);
-        var resolved = stack.Resolver.ResolveForRace(item, "0101");
+        var resolved = resolver.ResolveForRace(item, "0101");
         var setToken = $"c0101e{item.ModelId:D4}";
 
         var files = new Dictionary<string, byte[]>(StringComparer.Ordinal)
         {
-            [resolved.MdlPath] = stack.Assets.TryReadFile(resolved.MdlPath)!,
+            [resolved.MdlPath] = assets.TryReadFile(resolved.MdlPath)!,
         };
 
         var model = MdlParser.Parse(files[resolved.MdlPath]);
@@ -97,8 +93,8 @@ public sealed class ModRetargetTests : IDisposable
         {
             if (!name.Contains(setToken, StringComparison.Ordinal))
                 continue;
-            var mtrlPath = stack.Resolver.ResolveMaterialPath(resolved, name);
-            var mtrl = stack.Assets.TryReadFile(mtrlPath);
+            var mtrlPath = resolver.ResolveMaterialPath(resolved, name);
+            var mtrl = assets.TryReadFile(mtrlPath);
             if (mtrl is null)
                 continue;
             if (includeMaterials)
@@ -106,11 +102,28 @@ public sealed class ModRetargetTests : IDisposable
             foreach (var texPath in MtrlParser.Parse(mtrl).TexturePaths)
             {
                 if (texPath.Contains(setToken, StringComparison.Ordinal)
-                    && stack.Assets.TryReadFile(texPath) is { } tex)
+                    && assets.TryReadFile(texPath) is { } tex)
                     files[texPath] = tex;
             }
         }
 
+        return files;
+    }
+
+    /// <summary>Builds a .pmp from the source item's real c0101 game files.</summary>
+    private (string PmpPath, EquipmentItem Source, string SetToken, IReadOnlyList<string> GamePaths) CreateGearPmp(
+        (AssetPathResolver Resolver, SessionService Session, RenderModelBuilder Builder,
+            IReadOnlyList<EquipmentItem> Items, ModRetargeter Retargeter, ModpackImporter Importer,
+            EffectiveAssetProvider Assets) stack,
+        bool includeMaterials)
+    {
+        var item = PickSourceItem(stack.Items, stack.Resolver);
+        var files = CollectItemFiles(stack.Resolver, stack.Assets, item, includeMaterials);
+        return (WritePmp(files), item, $"c0101e{item.ModelId:D4}", files.Keys.ToArray());
+    }
+
+    private string WritePmp(Dictionary<string, byte[]> files)
+    {
         var modDir = Path.Combine(_tempRoot, "src-mod-" + Guid.NewGuid().ToString("N")[..8]);
         Directory.CreateDirectory(Path.Combine(modDir, "files"));
         var fileNodes = new JsonObject();
@@ -142,7 +155,7 @@ public sealed class ModRetargetTests : IDisposable
 
         var pmpPath = modDir + ".pmp";
         ZipFile.CreateFromDirectory(modDir, pmpPath);
-        return (pmpPath, item, setToken, files.Keys.ToArray());
+        return pmpPath;
     }
 
     private static Dictionary<string, byte[]> ReadPmp(string pmpPath, out Dictionary<string, string> fileMap)
@@ -259,5 +272,55 @@ public sealed class ModRetargetTests : IDisposable
         var mtrlKey = files.Keys.First(k => k.EndsWith(".mtrl", StringComparison.Ordinal) && k.Contains(dstToken));
         var texturePaths = MtrlParser.Parse(files[mtrlKey]).TexturePaths;
         Assert.Contains(texturePaths, t => files.ContainsKey(t) && t.Contains(dstToken));
+    }
+
+    [SkippableFact]
+    public async Task RetargetAssignsEachModelItsOwnTarget()
+    {
+        Skip.IfNot(TryInit());
+        var stack = CreateStack();
+
+        // A mod affecting two slots: a body and a legs model, both c0101.
+        var body = PickSourceItem(stack.Items, stack.Resolver);
+        var legs = stack.Items.First(i => !i.IsWeapon && !i.IsBodyPart && i.Slot == EquipSlot.Legs
+            && stack.Resolver.GetAvailableVariants(i).Any(v => v.Code == "0101"));
+        var allFiles = CollectItemFiles(stack.Resolver, stack.Assets, body, includeMaterials: true);
+        foreach (var (path, bytes) in CollectItemFiles(stack.Resolver, stack.Assets, legs, includeMaterials: true))
+            allFiles[path] = bytes;
+        var pmp = WritePmp(allFiles);
+
+        var analysis = await stack.Retargeter.AnalyzeAsync(pmp);
+        Assert.Equal(2, analysis.Bindings.Count);
+        var bodyBinding = analysis.Bindings.Single(b => b.Slot == EquipSlot.Body);
+        var legsBinding = analysis.Bindings.Single(b => b.Slot == EquipSlot.Legs);
+
+        // Each binding gets its own destination item and race.
+        var destBody = stack.Items.First(i => !i.IsWeapon && !i.IsBodyPart
+            && i.Slot == EquipSlot.Body && i.ModelId != body.ModelId);
+        var destLegs = stack.Items.First(i => !i.IsWeapon && !i.IsBodyPart
+            && i.Slot == EquipSlot.Legs && i.ModelId != legs.ModelId);
+        var output = Path.Combine(_tempRoot, "retargeted-multi.pmp");
+
+        var report = await stack.Retargeter.RetargetAsync(pmp,
+        [
+            new RetargetAssignment(bodyBinding, destBody, "0801"),
+            new RetargetAssignment(legsBinding, destLegs, "0101"),
+        ], output);
+
+        Assert.Equal(allFiles.Count, report.FilesRewired);
+        Assert.Equal(0, report.FilesCarried);
+        Assert.Equal(2, report.AssignmentLabels.Count);
+
+        // Both models moved, each to its own item and race.
+        var outFiles = ReadPmp(output, out _);
+        Assert.All(outFiles.Keys, k =>
+        {
+            Assert.DoesNotContain($"c0101e{body.ModelId:D4}", k);
+            Assert.DoesNotContain($"c0101e{legs.ModelId:D4}", k);
+        });
+        Assert.Contains(outFiles.Keys, k => k.EndsWith(".mdl", StringComparison.Ordinal)
+            && k.Contains($"c0801e{destBody.ModelId:D4}"));
+        Assert.Contains(outFiles.Keys, k => k.EndsWith(".mdl", StringComparison.Ordinal)
+            && k.Contains($"c0101e{destLegs.ModelId:D4}"));
     }
 }
