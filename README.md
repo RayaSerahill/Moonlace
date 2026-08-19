@@ -39,37 +39,35 @@ Your actual FFXIV installation stays read-only the entire time.
 
 ## Download and run
 
-Grab the archive for your platform from the latest release, extract it wherever you like, and run Moonlace.
+Grab the build for your platform from the latest release. Every variant keeps itself up to date: when a new version is published, an **Update** button appears in the top bar and one click installs it and restarts Moonlace.
 
 ### Linux
 
 Download:
 
 ```text
-Moonlace-2.2.0-linux-x64.tar.gz
+Moonlace.AppImage
 ```
 
 Then:
 
 ```sh
-tar -xzf Moonlace-2.2.0-linux-x64.tar.gz
-cd Moonlace-2.2.0-linux-x64
-./Moonlace
+chmod +x Moonlace.AppImage
+./Moonlace.AppImage
 ```
+
+The AppImage updates itself in place.
 
 ### Windows
 
-Download:
+Pick one:
 
 ```text
-Moonlace-2.2.0-win-x64.zip
+Moonlace-win-Setup.exe      installer with shortcuts
+Moonlace-win-Portable.zip   no install, run from anywhere
 ```
 
-Extract it and run:
-
-```text
-Moonlace.exe
-```
+Run the installer, or extract the portable zip and run `Moonlace.exe`. Both update themselves.
 
 The release builds are self-contained, so there is no separate .NET runtime to install.
 
@@ -258,7 +256,7 @@ Run the tests:
 dotnet test
 ```
 
-Build release archives into `dist/`:
+Build release packages into `dist/releases/` (requires the Velopack CLI, `dotnet tool install -g vpk`):
 
 ```sh
 scripts/build-release.sh

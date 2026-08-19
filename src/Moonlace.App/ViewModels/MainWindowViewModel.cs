@@ -1,7 +1,9 @@
 using System;
 using System.Threading.Tasks;
 using CommunityToolkit.Mvvm.ComponentModel;
+using CommunityToolkit.Mvvm.Input;
 using Microsoft.Extensions.Logging;
+using Moonlace.App.Services;
 using Moonlace.Core.Interfaces;
 using Moonlace.Core.Services;
 
@@ -15,6 +17,7 @@ public partial class MainWindowViewModel : ViewModelBase
 {
     private readonly ISettingsService _settings;
     private readonly IGameDataService _gameData;
+    private readonly UpdateService _updates;
     private readonly ILogger<MainWindowViewModel> _logger;
 
     public SetupViewModel Setup { get; }
@@ -33,9 +36,17 @@ public partial class MainWindowViewModel : ViewModelBase
     [ObservableProperty]
     private bool _isInitializing;
 
+    /// <summary>Label of the update pill in the top bar; null hides it.</summary>
+    [ObservableProperty]
+    private string? _updateBadgeText;
+
+    [ObservableProperty]
+    private bool _isUpdateBusy;
+
     public MainWindowViewModel(
         ISettingsService settings,
         IGameDataService gameData,
+        UpdateService updates,
         SetupViewModel setup,
         BrowserViewModel browser,
         PenumbraViewModel penumbra,
@@ -45,6 +56,7 @@ public partial class MainWindowViewModel : ViewModelBase
     {
         _settings = settings;
         _gameData = gameData;
+        _updates = updates;
         Setup = setup;
         Browser = browser;
         Penumbra = penumbra;
@@ -61,6 +73,10 @@ public partial class MainWindowViewModel : ViewModelBase
     /// <summary>Called once at startup: revalidate the saved path and skip setup when it holds.</summary>
     public async Task StartAsync()
     {
+        // Fire-and-forget: the update pill appears whenever the check finds
+        // something, without ever delaying startup.
+        _ = CheckForUpdatesAsync();
+
         var saved = _settings.Load().GamePath;
         var result = InstallationValidator.Validate(saved);
         if (result.IsValid)
@@ -73,6 +89,37 @@ public partial class MainWindowViewModel : ViewModelBase
             _logger.LogInformation("No valid saved game path ({Reason}); showing setup", result.Error);
             Setup.GamePath = saved ?? "";
             CurrentView = Setup;
+        }
+    }
+
+    private async Task CheckForUpdatesAsync()
+    {
+        var version = await _updates.CheckForUpdateAsync();
+        if (version is not null)
+            await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(
+                () => UpdateBadgeText = $"Update v{version}");
+    }
+
+    /// <summary>Downloads the pending update, then applies it and restarts.</summary>
+    [RelayCommand]
+    private async Task InstallUpdateAsync()
+    {
+        if (IsUpdateBusy)
+            return;
+        IsUpdateBusy = true;
+        try
+        {
+            await _updates.DownloadAsync(percent =>
+                Avalonia.Threading.Dispatcher.UIThread.Post(
+                    () => UpdateBadgeText = $"Downloading… {percent}%"));
+            UpdateBadgeText = "Restarting…";
+            _updates.ApplyAndRestart();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Update failed");
+            UpdateBadgeText = "Update failed";
+            IsUpdateBusy = false;
         }
     }
 

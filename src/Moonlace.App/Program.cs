@@ -11,6 +11,10 @@ sealed class Program
     [STAThread]
     public static void Main(string[] args)
     {
+        // Velopack must run before anything else: on install/update/uninstall
+        // hooks it exits the process, and after an update it restarts us here.
+        Velopack.VelopackApp.Build().Run();
+
         System.Diagnostics.Trace.Listeners.Add(new System.Diagnostics.ConsoleTraceListener());
         BuildAvaloniaApp()
             .StartWithClassicDesktopLifetime(args);

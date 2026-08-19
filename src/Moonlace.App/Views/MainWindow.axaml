@@ -65,6 +65,14 @@
                             <TextBlock FontSize="11" FontWeight="SemiBold" Foreground="#221A1F"
                                        Text="{Binding Penumbra.LinkStatus}" TextTrimming="CharacterEllipsis" MaxWidth="420" />
                         </Border>
+                        <Button Command="{Binding InstallUpdateCommand}"
+                                IsEnabled="{Binding !IsUpdateBusy}"
+                                IsVisible="{Binding UpdateBadgeText, Converter={x:Static ObjectConverters.IsNotNull}}"
+                                Background="{StaticResource MoonAccentDimBrush}" CornerRadius="999" Padding="10,3"
+                                BorderThickness="0" VerticalAlignment="Center">
+                            <TextBlock FontSize="11" FontWeight="SemiBold" Foreground="#221A1F"
+                                       Text="{Binding UpdateBadgeText}" />
+                        </Button>
                     </StackPanel>
 
                     <Panel />

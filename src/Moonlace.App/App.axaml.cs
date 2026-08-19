@@ -94,6 +94,7 @@ public partial class App : Application
 
         // App
         services.AddSingleton<IFolderPickerService, FolderPickerService>();
+        services.AddSingleton<UpdateService>();
         services.AddSingleton<IFilePickerService, FilePickerService>();
         services.AddSingleton<SetupViewModel>();
         services.AddSingleton<PenumbraViewModel>();
