@@ -144,6 +144,22 @@ public sealed class PenumbraLinkServiceTests : IDisposable
     }
 
     [Fact]
+    public void LinkingWithATrailingSlashStillResolvesModFiles()
+    {
+        // Folder pickers and shell tab completion hand over "…/mod/"; the
+        // escape check must not mistake every redirect for a path escape.
+        var link = Create();
+        link.Link(CreateV4Mod() + Path.DirectorySeparatorChar, []);
+
+        Assert.Equal("base model", Encoding.UTF8.GetString(
+            link.TryReadAsset("chara/accessory/a0053/model/c0801a0053_rir.mdl")!));
+
+        var gamePath = "chara/accessory/a0053/material/v0001/mt_rir_b.mtrl";
+        link.WriteAsset(gamePath, Encoding.UTF8.GetBytes("edited"));
+        Assert.Equal("edited", Encoding.UTF8.GetString(link.TryReadAsset(gamePath)!));
+    }
+
+    [Fact]
     public void InspectParsesLegacyV3ModAndDefaultSettings()
     {
         var link = Create();
