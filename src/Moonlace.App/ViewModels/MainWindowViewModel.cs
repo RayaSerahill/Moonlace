@@ -25,6 +25,8 @@ public partial class MainWindowViewModel : ViewModelBase
 
     public FilesViewModel Files { get; }
 
+    public ModToolsViewModel ModTools { get; }
+
     [ObservableProperty]
     private ViewModelBase _currentView;
 
@@ -38,6 +40,7 @@ public partial class MainWindowViewModel : ViewModelBase
         BrowserViewModel browser,
         PenumbraViewModel penumbra,
         FilesViewModel files,
+        ModToolsViewModel modTools,
         ILogger<MainWindowViewModel> logger)
     {
         _settings = settings;
@@ -46,6 +49,7 @@ public partial class MainWindowViewModel : ViewModelBase
         Browser = browser;
         Penumbra = penumbra;
         Files = files;
+        ModTools = modTools;
         _logger = logger;
 
         _currentView = setup;
@@ -85,6 +89,12 @@ public partial class MainWindowViewModel : ViewModelBase
             var autoMod = Environment.GetEnvironmentVariable("MOONLACE_AUTOPENUMBRA");
             if (!string.IsNullOrEmpty(autoMod))
                 await Penumbra.LinkWithDefaultsAsync(autoMod);
+
+            // Dev/testing hook: retarget a modpack headlessly and save the
+            // result (runs first so AUTOIMPORT can pick up the output).
+            var autoRetarget = Environment.GetEnvironmentVariable("MOONLACE_AUTORETARGET");
+            if (!string.IsNullOrEmpty(autoRetarget))
+                await ModTools.RetargetHeadlessAsync(autoRetarget);
 
             // Dev/testing hook: import a modpack as edits once a destination
             // (item selection or Penumbra link) exists.
