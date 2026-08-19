@@ -20,7 +20,7 @@ public sealed class DestinationChoice
 {
     public required EquipmentItem Item { get; init; }
 
-    public string Label => $"{Item.Name} · {(Item.IsAccessory ? 'a' : 'e')}{Item.ModelId:D4} v{Item.Variant}";
+    public string Label => $"{Item.Name} · {Item.Slot} · {(Item.IsAccessory ? 'a' : 'e')}{Item.ModelId:D4} v{Item.Variant}";
 }
 
 /// <summary>
@@ -215,7 +215,10 @@ public partial class ModToolsViewModel : ViewModelBase
         assignment.Race = value;
     }
 
-    /// <summary>Items that can replace the selected model: same equip slot, filtered by the search text.</summary>
+    /// <summary>
+    /// Items that can replace the selected model: any gear or accessory slot
+    /// (same-slot matches listed first), filtered by the search text.
+    /// </summary>
     private async Task RefreshDestinationsAsync()
     {
         var assignment = SelectedAssignment;
@@ -229,8 +232,9 @@ public partial class ModToolsViewModel : ViewModelBase
         _allItems ??= await _items.GetEquipmentItemsAsync();
         var search = DestinationSearch.Trim();
         var matches = _allItems
-            .Where(i => !i.IsWeapon && !i.IsBodyPart && i.Slot == assignment.Binding.Slot)
+            .Where(i => !i.IsWeapon && !i.IsBodyPart)
             .Where(i => search.Length == 0 || i.Name.Contains(search, StringComparison.OrdinalIgnoreCase))
+            .OrderByDescending(i => i.Slot == assignment.Binding.Slot)
             .Take(MaxDestinationChoices)
             .ToArray();
 
@@ -349,7 +353,10 @@ public partial class ModToolsViewModel : ViewModelBase
         try
         {
             _allItems ??= await _items.GetEquipmentItemsAsync();
-            var destination = _allItems.First(i => i.Name == parts[1] && i.Slot == assignment.Binding.Slot);
+            var destination = _allItems
+                .Where(i => !i.IsWeapon && !i.IsBodyPart && i.Name == parts[1])
+                .OrderByDescending(i => i.Slot == assignment.Binding.Slot)
+                .First();
             assignment.Destination = new DestinationChoice { Item = destination };
             assignment.Race = DestinationRaces.FirstOrDefault(r => r.Code == parts[2]);
             SaveRetargetedCommand.NotifyCanExecuteChanged();

@@ -81,7 +81,7 @@ public sealed class ModRetargetTests : IDisposable
         AssetPathResolver resolver, EffectiveAssetProvider assets, EquipmentItem item, bool includeMaterials)
     {
         var resolved = resolver.ResolveForRace(item, "0101");
-        var setToken = $"c0101e{item.ModelId:D4}";
+        var setToken = $"c0101{(item.IsAccessory ? 'a' : 'e')}{item.ModelId:D4}";
 
         var files = new Dictionary<string, byte[]>(StringComparer.Ordinal)
         {
@@ -322,5 +322,55 @@ public sealed class ModRetargetTests : IDisposable
             && k.Contains($"c0801e{destBody.ModelId:D4}"));
         Assert.Contains(outFiles.Keys, k => k.EndsWith(".mdl", StringComparison.Ordinal)
             && k.Contains($"c0101e{destLegs.ModelId:D4}"));
+    }
+
+    [SkippableFact]
+    public async Task RetargetMovesAnAccessoryOntoAGearSlot()
+    {
+        Skip.IfNot(TryInit());
+        var stack = CreateStack();
+
+        // A necklace mod moved onto a Body gear item.
+        var neck = stack.Items.First(i => i.IsAccessory && i.Slot == EquipSlot.Neck
+            && stack.Resolver.GetAvailableVariants(i).Any(v => v.Code == "0101"));
+        var files = CollectItemFiles(stack.Resolver, stack.Assets, neck, includeMaterials: true);
+        var pmp = WritePmp(files);
+
+        var analysis = await stack.Retargeter.AnalyzeAsync(pmp);
+        var binding = Assert.Single(analysis.Bindings);
+        Assert.Equal(EquipSlot.Neck, binding.Slot);
+        Assert.StartsWith("a", binding.SetCode);
+
+        var destination = stack.Items.First(i => !i.IsWeapon && !i.IsBodyPart && i.Slot == EquipSlot.Body);
+        var srcToken = $"c0101a{neck.ModelId:D4}";
+        var dstToken = $"c0101e{destination.ModelId:D4}";
+        var output = Path.Combine(_tempRoot, "retargeted-crosskind.pmp");
+
+        var report = await stack.Retargeter.RetargetAsync(pmp, binding, destination, "0101", output);
+        Assert.Equal(files.Count, report.FilesRewired);
+        Assert.Contains(report.Warnings, w => w.Contains("rigging"));
+
+        // Paths and the model's material names move to the gear set with the
+        // destination's slot suffix.
+        var outFiles = ReadPmp(output, out _);
+        Assert.All(outFiles.Keys, k =>
+        {
+            Assert.DoesNotContain(srcToken, k);
+            Assert.DoesNotContain("chara/accessory/", k);
+        });
+        var mdlKey = Assert.Single(outFiles.Keys, k => k.EndsWith(".mdl", StringComparison.Ordinal));
+        Assert.EndsWith($"{dstToken}_top.mdl", mdlKey);
+        var model = MdlParser.Parse(outFiles[mdlKey]);
+        Assert.DoesNotContain(model.MaterialNames, n => n.Contains(srcToken));
+        Assert.Contains(model.MaterialNames, n => n.Contains($"{dstToken}_top"));
+
+        // The output imports into a session for the destination item and the
+        // viewport builds the necklace model on the gear slot's paths.
+        stack.Session.ActivateForItem(destination);
+        await stack.Importer.ImportAsync(output);
+        stack.Resolver.PreferredRaceCode = "0101";
+        var render = await stack.Builder.LoadAsync(destination);
+        Assert.NotEmpty(render.Meshes);
+        Assert.Contains(render.Meshes, m => m.Material.GamePath.Contains(dstToken));
     }
 }
