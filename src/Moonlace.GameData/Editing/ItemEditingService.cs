@@ -234,6 +234,135 @@ public sealed class ItemEditingService
         }, ct);
     }
 
+    /// <summary>
+    /// Creates a new model version (race/gender variant) for an equipment or
+    /// accessory item by copying the source version onto the target race's
+    /// paths: the model (material names re-race-coded in its string table),
+    /// the item's own materials, and their race-coded textures. Everything is
+    /// stored through the normal edit path — the session (so PMP export
+    /// includes it) or the linked Penumbra mod (registered in its meta JSON)
+    /// — so the new version is editable without affecting the others.
+    /// Character materials (skin, …) are repointed to the target race's own
+    /// game files when they exist. Returns the number of files stored.
+    /// </summary>
+    public Task<int> CreateModelVersionAsync(EquipmentItem item, string sourceRaceCode, string targetRaceCode, CancellationToken ct = default)
+    {
+        return Task.Run(() =>
+        {
+            if (item.IsWeapon || item.IsBodyPart)
+                throw new InvalidOperationException("Only equipment and accessories have race-specific model versions.");
+            if (sourceRaceCode == targetRaceCode)
+                throw new ArgumentException("The source and target versions are the same.");
+
+            var targetMdlPath = _resolver.GetEquipmentModelPath(item, targetRaceCode);
+            if (_assets.FileExists(targetMdlPath))
+                throw new InvalidOperationException($"A c{targetRaceCode} model version already exists for this item.");
+
+            var source = _resolver.ResolveForRace(item, sourceRaceCode);
+            var mdlBytes = _assets.TryReadFile(source.MdlPath)
+                ?? throw new AssetNotFoundException($"Source model could not be read: {source.MdlPath}");
+
+            var sourceToken = $"c{sourceRaceCode}";
+            var targetToken = $"c{targetRaceCode}";
+            // "c0101e0602" — marks paths belonging to this item's own asset set.
+            var sourceSetToken = sourceToken + AssetPathResolver.SetCode(item);
+            var targetSetToken = targetToken + AssetPathResolver.SetCode(item);
+
+            var parsed = MdlParser.Parse(mdlBytes);
+            var filesStored = 0;
+            var renames = new Dictionary<string, string>(StringComparer.Ordinal);
+            foreach (var name in parsed.MaterialNames.Distinct(StringComparer.Ordinal))
+            {
+                ct.ThrowIfCancellationRequested();
+                if (!name.Contains(sourceToken, StringComparison.Ordinal))
+                    continue; // not race-coded (shared/absolute) — keep as-is
+
+                var renamed = name.Replace(sourceToken, targetToken, StringComparison.Ordinal);
+                if (name.Contains(sourceSetToken, StringComparison.Ordinal))
+                {
+                    // The item's own material: duplicate it (and its race-coded
+                    // textures) so the new version is editable in isolation.
+                    filesStored += CopyMaterialForRace(source, name, renamed, sourceSetToken, targetSetToken);
+                    renames[name] = renamed;
+                }
+                else
+                {
+                    // Character material (skin, hair, …): repoint to the closest
+                    // race the game ships materials for — the target race, else
+                    // the gender's base race (skin materials only exist for the
+                    // base bodies; e.g. Miqo'te ♀ uses the c0201 skin).
+                    var chosen = new[] { targetRaceCode, GenderBaseRace(targetRaceCode) }
+                        .Distinct()
+                        .Where(code => code != sourceRaceCode)
+                        .Select(code => name.Replace(sourceToken, $"c{code}", StringComparison.Ordinal))
+                        .FirstOrDefault(candidate => _assets.FileExists(_resolver.ResolveMaterialPath(source, candidate)));
+                    if (chosen is not null)
+                        renames[name] = chosen;
+                    else
+                        _logger.LogWarning("No c{Race} equivalent for {Name}; the new version keeps it as-is",
+                            targetRaceCode, name);
+                }
+            }
+
+            var patchedMdl = renames.Count == 0
+                ? mdlBytes
+                : MdlMaterialRenamer.RenameMaterials(mdlBytes, n => renames.GetValueOrDefault(n));
+            Store(targetMdlPath, SessionAssetKind.Model, patchedMdl);
+            filesStored++;
+
+            _logger.LogInformation("Created model version c{Target} from c{Source} for {Item} ({Files} files)",
+                targetRaceCode, sourceRaceCode, item.Name, filesStored);
+            return filesStored;
+        }, ct);
+    }
+
+    /// <summary>"0101" for male race codes, "0201" for female — the bodies whose skin materials always exist.</summary>
+    private static string GenderBaseRace(string raceCode) =>
+        raceCode.Length == 4 && int.TryParse(raceCode[..2], out var race) && race % 2 == 0 ? "0201" : "0101";
+
+    /// <summary>Copies one item-owned material (and its race-coded textures) onto the target race's paths.</summary>
+    private int CopyMaterialForRace(ResolvedModelInfo source, string name, string renamedName, string sourceSetToken, string targetSetToken)
+    {
+        var sourcePath = _resolver.ResolveMaterialPath(source, name);
+        var bytes = _assets.TryReadFile(sourcePath)
+            ?? throw new AssetNotFoundException($"Material could not be read: {sourcePath}");
+        var stored = 0;
+
+        var parsed = MtrlParser.Parse(bytes);
+        var newTexturePaths = new List<string>(parsed.TexturePaths.Count);
+        foreach (var texPath in parsed.TexturePaths)
+        {
+            if (string.IsNullOrEmpty(texPath) || !texPath.Contains(sourceSetToken, StringComparison.Ordinal))
+            {
+                newTexturePaths.Add(texPath); // shared texture — referenced, not copied
+                continue;
+            }
+
+            var texBytes = _assets.TryReadFile(texPath);
+            if (texBytes is null)
+            {
+                _logger.LogWarning("Texture could not be read: {Path}; the new version keeps the shared path", texPath);
+                newTexturePaths.Add(texPath);
+                continue;
+            }
+
+            var renamedTex = texPath.Replace(sourceSetToken, targetSetToken, StringComparison.Ordinal);
+            if (!_assets.FileExists(renamedTex))
+            {
+                Store(renamedTex, SessionAssetKind.Texture, texBytes);
+                stored++;
+            }
+
+            newTexturePaths.Add(renamedTex);
+        }
+
+        var rewritten = newTexturePaths.SequenceEqual(parsed.TexturePaths, StringComparer.Ordinal)
+            ? bytes
+            : MtrlWriter.ReplaceTexturePaths(bytes, newTexturePaths);
+        Store(_resolver.ResolveMaterialPath(source, renamedName), SessionAssetKind.Material, rewritten);
+        return stored + 1;
+    }
+
     /// <summary>Exports the effective model (session version when modified) as .glb. Does not touch session state.</summary>
     public Task ExportModelGltfAsync(EquipmentItem item, string outputPath, CancellationToken ct = default)
     {
