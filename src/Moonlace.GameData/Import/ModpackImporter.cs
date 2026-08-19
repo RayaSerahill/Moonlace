@@ -146,7 +146,7 @@ public sealed class ModpackImporter
     /// default option selection, layered in Penumbra precedence (group
     /// priority, then option priority for Multi groups, later layers win).
     /// </summary>
-    private static Dictionary<string, string> EffectiveFiles(PenumbraModInfo info)
+    internal static Dictionary<string, string> EffectiveFiles(PenumbraModInfo info)
     {
         var map = new Dictionary<string, string>(info.DefaultFiles, StringComparer.OrdinalIgnoreCase);
 

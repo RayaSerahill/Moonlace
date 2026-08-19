@@ -291,7 +291,7 @@ public sealed class ItemEditingService
                     // race the game ships materials for — the target race, else
                     // the gender's base race (skin materials only exist for the
                     // base bodies; e.g. Miqo'te ♀ uses the c0201 skin).
-                    var chosen = new[] { targetRaceCode, GenderBaseRace(targetRaceCode) }
+                    var chosen = new[] { targetRaceCode, AssetPathResolver.GenderBaseRace(targetRaceCode) }
                         .Distinct()
                         .Where(code => code != sourceRaceCode)
                         .Select(code => name.Replace(sourceToken, $"c{code}", StringComparison.Ordinal))
@@ -315,10 +315,6 @@ public sealed class ItemEditingService
             return filesStored;
         }, ct);
     }
-
-    /// <summary>"0101" for male race codes, "0201" for female — the bodies whose skin materials always exist.</summary>
-    private static string GenderBaseRace(string raceCode) =>
-        raceCode.Length == 4 && int.TryParse(raceCode[..2], out var race) && race % 2 == 0 ? "0201" : "0101";
 
     /// <summary>Copies one item-owned material (and its race-coded textures) onto the target race's paths.</summary>
     private int CopyMaterialForRace(ResolvedModelInfo source, string name, string renamedName, string sourceSetToken, string targetSetToken)
