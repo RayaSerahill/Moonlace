@@ -12,7 +12,7 @@ namespace Moonlace.App.ViewModels;
 
 /// <summary>
 /// The Files menu in the top bar. "Upgrade to DT" takes a distributable
-/// modpack — a Penumbra .pmp or a .ttmp/.ttmp2 — converts its legacy
+/// modpack a Penumbra .pmp or a .ttmp/.ttmp2 converts its legacy
 /// (Endwalker) gear assets to Dawntrail formats, and writes a new upgraded
 /// .pmp. "Import mod" takes the same modpack formats and applies their files
 /// as edits: into the active item's session, or into the linked Penumbra mod
@@ -100,7 +100,7 @@ public partial class FilesViewModel : ViewModelBase
         ConfirmTitle = "Upgrade to Dawntrail";
         ConfirmQuestion = $"Upgrade “{name}”?";
         ConfirmBody =
-            "A new upgraded .pmp is written — the selected modpack itself is not touched. " +
+            "A new upgraded .pmp is written the selected modpack itself is not touched. " +
             "Legacy (Endwalker) gear materials are converted to Dawntrail formats: materials become " +
             "characterlegacy with 32-row color tables, index textures are generated from the old normal " +
             "maps, and mask/normal channels are moved. Skin, hair and already-current materials are left " +
@@ -115,7 +115,7 @@ public partial class FilesViewModel : ViewModelBase
         ErrorText = null;
         if (_importer.DescribeDestination() is null)
         {
-            ErrorText = "Select an item first — without a Penumbra link, imported files become that item's session edits.";
+            ErrorText = "Select an item first without a Penumbra link, imported files become that item's session edits.";
             return;
         }
 
@@ -127,7 +127,7 @@ public partial class FilesViewModel : ViewModelBase
         // The destination can have changed while the picker was open.
         if (_importer.DescribeDestination() is not { } destination)
         {
-            ErrorText = "Select an item first — without a Penumbra link, imported files become that item's session edits.";
+            ErrorText = "Select an item first without a Penumbra link, imported files become that item's session edits.";
             return;
         }
 
@@ -138,7 +138,7 @@ public partial class FilesViewModel : ViewModelBase
         ConfirmQuestion = $"Import “{name}” into {destination}?";
         ConfirmBody =
             "The modpack's files (with its default option selection) become edits, exactly as if you had " +
-            "made them here — the modpack file itself is not touched. Session edits stay in Moonlace's " +
+            "made them here the modpack file itself is not touched. Session edits stay in Moonlace's " +
             "workspace until you export them; edits to a linked mod are live in the mod folder and " +
             "revertible from the Penumbra menu. Metadata manipulations (IMC/EQP/EST…) are not imported.";
         ConfirmButtonText = "Import";

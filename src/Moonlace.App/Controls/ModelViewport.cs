@@ -59,7 +59,7 @@ public sealed class ModelViewport : OpenGlControlBase
     {
         // The GL surface is presented through a composition visual that the
         // hit-tester does not see, leaving the control transparent to the
-        // pointer — camera input never arrives. A transparent fill is
+        // pointer camera input never arrives. A transparent fill is
         // hit-testable geometry, so this one rect makes the whole viewport
         // clickable.
         context.FillRectangle(global::Avalonia.Media.Brushes.Transparent, new Rect(Bounds.Size));
@@ -93,7 +93,7 @@ public sealed class ModelViewport : OpenGlControlBase
 
     protected override void OnOpenGlLost()
     {
-        // The context died (driver reset/GPU hiccup) — its GPU handles died
+        // The context died (driver reset/GPU hiccup) its GPU handles died
         // with it, so drop them without GL calls and queue the current model
         // for re-upload when Avalonia hands us a fresh context.
         System.Diagnostics.Trace.WriteLine("ModelViewport: GL context lost; resources abandoned for rebuild");

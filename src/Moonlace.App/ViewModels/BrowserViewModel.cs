@@ -227,7 +227,7 @@ public partial class BrowserViewModel : ViewModelBase
 
     /// <summary>
     /// Expands/collapses a category row. This runs from the row's own button
-    /// (which swallows the click), never from list selection — toggling
+    /// (which swallows the click), never from list selection toggling
     /// inside a selection-changed handler fights the ListBox's own click
     /// processing and double-toggles.
     /// </summary>
@@ -374,7 +374,7 @@ public partial class BrowserViewModel : ViewModelBase
 
             ModelLoaded?.Invoke(model);
             var triangles = model.Meshes.Sum(m => m.Indices.Length) / 3;
-            StatusText = $"{item.Name} — {model.Meshes.Count} meshes, {triangles:N0} triangles";
+            StatusText = $"{item.Name} {model.Meshes.Count} meshes, {triangles:N0} triangles";
         }
         catch (OperationCanceledException)
         {

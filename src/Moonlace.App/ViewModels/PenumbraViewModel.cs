@@ -123,7 +123,7 @@ public partial class PenumbraViewModel : ViewModelBase
         var changed = _link.ChangedFileCount;
         var status = changed == 0
             ? $"Live editing “{_link.ModName}”"
-            : $"Live editing “{_link.ModName}” — {changed} file{(changed == 1 ? "" : "s")} changed";
+            : $"Live editing “{_link.ModName}” - {changed} file{(changed == 1 ? "" : "s")} changed";
         if (target is not null)
             status += $" · edits → {target.Option}";
         LinkStatus = status;

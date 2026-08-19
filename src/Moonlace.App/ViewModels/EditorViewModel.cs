@@ -20,7 +20,7 @@ namespace Moonlace.App.ViewModels;
 /// The editing tabs under the viewport: Model (GLTF round-trip), Material
 /// (color-table editing), Texture (preview/import/export), plus the session
 /// status strip (dirty state, discard, PMP export). All edits flow through
-/// <see cref="ItemEditingService"/> into the session — never into the game.
+/// <see cref="ItemEditingService"/> into the session never into the game.
 /// </summary>
 public partial class EditorViewModel : ViewModelBase
 {
@@ -94,9 +94,9 @@ public partial class EditorViewModel : ViewModelBase
     [ObservableProperty]
     private bool _isNewVersionPanelOpen;
 
-    /// <summary>Explains what creating a version will copy — based on the selected source version.</summary>
+    /// <summary>Explains what creating a version will copy based on the selected source version.</summary>
     public string NewVersionHint => SelectedVersion is { } source
-        ? $"Copies the {source.Label} version — the new version gets its own model, materials and textures, editable without touching the other versions."
+        ? $"Copies the {source.Label} version the new version gets its own model, materials and textures, editable without touching the other versions."
         : "";
 
     private bool _autoCreateVersionConsumed;
@@ -247,7 +247,7 @@ public partial class EditorViewModel : ViewModelBase
 
     /// <summary>
     /// Second phase: (re)loads the tab contents for the current item and
-    /// version. Also re-enumerates the model versions — effective assets may
+    /// version. Also re-enumerates the model versions effective assets may
     /// have changed wholesale (link, revert, import) since the last load.
     /// </summary>
     public async Task RefreshTabsAsync()
@@ -376,7 +376,7 @@ public partial class EditorViewModel : ViewModelBase
             var changed = _link.ChangedFileCount;
             var summary = changed == 0
                 ? $"Live editing “{_link.ModName}”"
-                : $"Live editing “{_link.ModName}” — {changed} file{(changed == 1 ? "" : "s")} changed";
+                : $"Live editing “{_link.ModName}” {changed} file{(changed == 1 ? "" : "s")} changed";
             if (_link.EditTarget is { } target)
                 summary += $" · edits → “{target.Option}”";
             SessionSummary = summary;
@@ -567,7 +567,7 @@ public partial class EditorViewModel : ViewModelBase
         await RunOperationAsync("Discarding changes…", async () =>
         {
             _session.DiscardActiveSession();
-            // Created model versions vanish with the session — re-enumerate.
+            // Created model versions vanish with the session re-enumerate.
             await LoadVersionsAsync(SelectedVersion?.Code);
             await RefreshAsync();
             NotifyAssetsChanged();
