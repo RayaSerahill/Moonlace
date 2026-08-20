@@ -97,6 +97,11 @@ public sealed class BrowserViewModelTests
             RowId = 0x40000001, Name = "Midlander ♂ Face 1", Slot = EquipSlot.Face,
             ModelId = 1, SecondaryId = 0, Variant = 1, RaceCode = "0101",
         },
+        new EquipmentItem
+        {
+            RowId = 0x43000001, Name = "Miqo'te ♀ Hair 5", Slot = EquipSlot.Hair,
+            ModelId = 5, SecondaryId = 0, Variant = 1, RaceCode = "0801",
+        },
     ];
 
     [Fact]
@@ -112,7 +117,7 @@ public sealed class BrowserViewModelTests
         Assert.All(mains, c => Assert.False(c.IsExpanded));
         Assert.Equal(3, mains[0].TotalItems);
         Assert.Equal(1, mains[1].TotalItems);
-        Assert.Equal(1, mains[2].TotalItems);
+        Assert.Equal(2, mains[2].TotalItems);
     }
 
     [Fact]
@@ -196,7 +201,8 @@ public sealed class BrowserViewModelTests
 
         vm.SearchText = "face";
         Assert.Equal(["Midlander ♂ Face 1"], vm.VisibleNodes.OfType<ItemNode>().Select(n => n.Name));
-        Assert.Equal(["Body", "Faces"], vm.VisibleNodes.OfType<CategoryNode>().Select(c => c.Label));
+        Assert.Equal(["Body", "Faces", "Male", "Midlander"],
+            vm.VisibleNodes.OfType<CategoryNode>().Select(c => c.Label));
 
         // Clearing the search returns to the collapsed default.
         vm.SearchText = "  ";
@@ -239,6 +245,54 @@ public sealed class BrowserViewModelTests
         Assert.Equal("Bronze Ring", vm.SelectedItem?.Name);
         Assert.Equal("Bronze Ring", (vm.SelectedNode as ItemNode)?.Name);
         Assert.Contains(vm.VisibleNodes.OfType<CategoryNode>(), c => c.Label == "Rings");
+    }
+
+    [Fact]
+    public async Task BodyPartsNestIntoGenderAndRaceGroups()
+    {
+        var vm = Create(MixedItems());
+        await vm.LoadItemsAsync();
+
+        CategoryNode Visible(string label) =>
+            vm.VisibleNodes.OfType<CategoryNode>().First(c => c.Label == label);
+
+        // Body › Hair › Female › Miqo'te, one collapsed level at a time.
+        vm.ToggleCategoryCommand.Execute(Visible("Body"));
+        var hair = Visible("Hair");
+        Assert.Equal(1, hair.Level);
+        Assert.Empty(vm.VisibleNodes.OfType<ItemNode>());
+
+        vm.ToggleCategoryCommand.Execute(hair);
+        var female = Visible("Female");
+        Assert.Equal(2, female.Level);
+        Assert.Empty(vm.VisibleNodes.OfType<ItemNode>());
+
+        vm.ToggleCategoryCommand.Execute(female);
+        var miqote = Visible("Miqo'te");
+        Assert.Equal(3, miqote.Level);
+        Assert.Equal(1, miqote.TotalItems);
+        Assert.Empty(vm.VisibleNodes.OfType<ItemNode>());
+
+        vm.ToggleCategoryCommand.Execute(miqote);
+        Assert.Equal(["Miqo'te ♀ Hair 5"], vm.VisibleNodes.OfType<ItemNode>().Select(n => n.Name));
+
+        // The face item's male group stays untouched by the female chain.
+        Assert.DoesNotContain(vm.VisibleNodes.OfType<CategoryNode>(), c => c.Label == "Male");
+    }
+
+    [Fact]
+    public async Task RevealAndSelectExpandsTheWholeBodyPartChain()
+    {
+        var vm = Create(MixedItems());
+        await vm.LoadItemsAsync();
+
+        var hair = MixedItems().First(i => i.Slot == EquipSlot.Hair);
+        vm.RevealAndSelect(hair);
+
+        Assert.Equal("Miqo'te ♀ Hair 5", vm.SelectedItem?.Name);
+        Assert.Equal("Miqo'te ♀ Hair 5", (vm.SelectedNode as ItemNode)?.Name);
+        Assert.Contains(vm.VisibleNodes.OfType<CategoryNode>(), c => c.Label == "Female");
+        Assert.Contains(vm.VisibleNodes.OfType<CategoryNode>(), c => c.Label == "Miqo'te");
     }
 
     private static async Task WaitUntil(Func<bool> condition)

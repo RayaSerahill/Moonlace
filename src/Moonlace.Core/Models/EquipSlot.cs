@@ -27,4 +27,5 @@ public enum EquipSlot
     Face,
     Tail,
     HumanBody,
+    Hair,
 }

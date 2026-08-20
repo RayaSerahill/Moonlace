@@ -14,7 +14,7 @@ Your actual FFXIV installation stays read-only the entire time.
 ## Features
 
 * **Browse basically everything**
-  Explore around 29,000 gear pieces and accessories, plus faces, tails, and body models. Everything is arranged in a searchable tree under Gear, Accessories, and Body.
+  Explore around 29,000 gear pieces and accessories, plus faces, hairstyles, tails, and body models. Everything is arranged in a searchable tree under Gear, Accessories, and Body.
 
 * **Real 3D previews**
   Models are rendered with their actual textures, materials, color tables, and race or gender variants.
@@ -104,7 +104,7 @@ The left panel contains three main sections:
 * **Accessories**
 * **Body**
 
-Body includes things such as faces, tails, and body models.
+Body includes things such as faces, hairstyles, tails, and body models, grouped further by gender and race.
 
 Expand a category manually or type into the search box to filter the entire tree. Search results remain grouped under their original categories.
 

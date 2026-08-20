@@ -8,8 +8,8 @@ namespace Moonlace.GameData.Items;
 
 /// <summary>
 /// Loads the browsable models: gear and accessories from the Item Excel
-/// sheet, plus character body parts (faces, tails, bodies) enumerated by
-/// probing the chara/human model paths per race.
+/// sheet, plus character body parts (faces, hair, tails, bodies) enumerated
+/// by probing the chara/human model paths per race.
 /// </summary>
 public sealed class ItemRepository : IItemRepository
 {
@@ -19,6 +19,7 @@ public sealed class ItemRepository : IItemRepository
     private const int MaxFaceNumber = 300;
     private const int MaxTailNumber = 100;
     private const int MaxBodyNumber = 300;
+    private const int MaxHairNumber = 300;
 
     private readonly LuminaGameDataService _gameData;
     private readonly ILogger<ItemRepository> _logger;
@@ -92,6 +93,7 @@ public sealed class ItemRepository : IItemRepository
             (EquipSlot.Face, "face", 'f', "fac", "Face", MaxFaceNumber),
             (EquipSlot.Tail, "tail", 't', "til", "Tail", MaxTailNumber),
             (EquipSlot.HumanBody, "body", 'b', "top", "Body", MaxBodyNumber),
+            (EquipSlot.Hair, "hair", 'h', "hir", "Hair", MaxHairNumber),
         };
 
         foreach (var (race, label) in AssetPathResolver.RaceTable)
@@ -128,7 +130,9 @@ public sealed class ItemRepository : IItemRepository
         {
             EquipSlot.Face => 0u,
             EquipSlot.Tail => 1u,
-            _ => 2u,
+            EquipSlot.HumanBody => 2u,
+            EquipSlot.Hair => 3u,
+            _ => throw new ArgumentOutOfRangeException(nameof(slot)),
         };
         return BodyPartRowBase | (kind << 24) | (uint.Parse(race) << 12) | (uint)number;
     }
