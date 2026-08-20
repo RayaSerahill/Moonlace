@@ -120,11 +120,14 @@ internal static class ShaderSources
                 float blend;
                 if (uColorTableRows == 32)
                 {
-                    // Dawntrail: red selects one of 16 row pairs, green blends within the pair.
+                    // Dawntrail: red selects one of 16 row pairs, green blends
+                    // within the pair. Green is inverted: 255 means fully the
+                    // even row, 0 fully the odd row (TexTools writes 255-blend
+                    // and the game reads it the same way).
                     int pair = int(floor(id.r * 15.0 + 0.5));
                     rowA = pair * 2;
                     rowB = rowA + 1;
-                    blend = id.g;
+                    blend = 1.0 - id.g;
                 }
                 else
                 {

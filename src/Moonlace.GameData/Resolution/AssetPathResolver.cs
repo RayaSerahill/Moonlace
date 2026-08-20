@@ -277,7 +277,31 @@ public sealed partial class AssetPathResolver
             if (_assets.FileExists(versioned))
                 return versioned;
             var flat = $"{materialDir}{materialName}";
-            return _assets.FileExists(flat) ? flat : versioned;
+            if (_assets.FileExists(flat))
+                return flat;
+
+            // Modded models often name a custom skin material (e.g. Bibo+
+            // "/mt_c0201b0001_bibo.mtrl") that a *separate* body mod provides
+            // in game — Penumbra's "auto skin assign" territory. When no
+            // linked source supplies it, fall back to the vanilla "_a" skin
+            // material (same body, then the gender-base body) so the skin
+            // still renders instead of going blank.
+            if (partLetter == "b")
+            {
+                foreach (var fallbackRace in (string[])[race, GenderBaseRace(race)])
+                {
+                    var fallback = $"chara/human/c{fallbackRace}/obj/body/b{partId}/material/v0001/mt_c{fallbackRace}b{partId}_a.mtrl";
+                    if (fallback != versioned && _assets.FileExists(fallback))
+                    {
+                        _logger.LogInformation(
+                            "Body material {Name} not found; falling back to vanilla skin {Fallback}",
+                            materialName, fallback);
+                        return fallback;
+                    }
+                }
+            }
+
+            return versioned;
         }
 
         return $"{model.MaterialBasePath}/v{model.MaterialSet:D4}{materialName}";

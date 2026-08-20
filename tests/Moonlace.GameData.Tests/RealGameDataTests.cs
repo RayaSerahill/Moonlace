@@ -111,6 +111,36 @@ public sealed class RealGameDataTests : IDisposable
     }
 
     [SkippableFact]
+    public void BodyMaterialFallsBackToVanillaSkin()
+    {
+        Skip.IfNot(TryInit());
+        var session = new Moonlace.Core.Session.SessionService(
+            NullLogger<Moonlace.Core.Session.SessionService>.Instance,
+            Path.Combine(Path.GetTempPath(), "moonlace-test-sessions-" + Guid.NewGuid().ToString("N")));
+        var link = new Moonlace.Core.Penumbra.PenumbraLinkService(NullLogger<Moonlace.Core.Penumbra.PenumbraLinkService>.Instance);
+        var assets = new EffectiveAssetProvider(_service, session, link);
+        var resolver = new AssetPathResolver(_service, assets, NullLogger<AssetPathResolver>.Instance);
+        var model = new ResolvedModelInfo(
+            "chara/equipment/e0410/model/c0201e0410_dwn.mdl", "chara/equipment/e0410/material", 1);
+
+        // A custom body-replacement skin material (e.g. Bibo+) that no linked
+        // source supplies falls back to the vanilla skin material.
+        Assert.Equal(
+            "chara/human/c0201/obj/body/b0001/material/v0001/mt_c0201b0001_a.mtrl",
+            resolver.ResolveMaterialPath(model, "/mt_c0201b0001_bibo.mtrl"));
+
+        // An unknown race code additionally falls back to the gender-base body.
+        Assert.Equal(
+            "chara/human/c0101/obj/body/b0001/material/v0001/mt_c0101b0001_a.mtrl",
+            resolver.ResolveMaterialPath(model, "/mt_c9901b0001_bibo.mtrl"));
+
+        // Vanilla skin names still resolve to themselves.
+        Assert.Equal(
+            "chara/human/c0201/obj/body/b0001/material/v0001/mt_c0201b0001_a.mtrl",
+            resolver.ResolveMaterialPath(model, "/mt_c0201b0001_a.mtrl"));
+    }
+
+    [SkippableFact]
     public void DecodesTextures()
     {
         Skip.IfNot(TryInit());
