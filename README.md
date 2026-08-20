@@ -34,6 +34,9 @@ Your actual FFXIV installation stays read-only the entire time.
 * **Export as PMP**
   Package the edits from your current session into a Penumbra mod with one click.
 
+* **Editing sessions**
+  Every launch starts a fresh session, so you always begin with a clean worktree. The Sessions menu shows exactly which files you have touched, reconnects you to any previous session, and can automatically clean up sessions you have not used for a day, a week, or a month.
+
 * **FFXIV stays pristine**
   Moonlace treats the game installation as strictly read-only. Normal edits live in Moonlace sessions. Live Penumbra edits only touch the mod folder you explicitly linked.
 

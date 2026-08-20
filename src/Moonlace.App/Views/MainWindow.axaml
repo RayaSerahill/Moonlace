@@ -23,6 +23,33 @@
                             <MenuItem Header="Upgrade to DT…"
                                       Command="{Binding Files.UpgradeToDtCommand}" />
                         </MenuItem>
+                        <MenuItem Header="Sessions" FontSize="13">
+                            <MenuItem Header="New session"
+                                      Command="{Binding Sessions.NewSessionCommand}" />
+                            <MenuItem Header="Session files…"
+                                      Command="{Binding Sessions.OpenFilesPanelCommand}" />
+                            <MenuItem Header="Connect to previous…"
+                                      Command="{Binding Sessions.OpenConnectPanelCommand}" />
+                            <Separator />
+                            <MenuItem Header="Keep old sessions">
+                                <MenuItem Header="For a day" ToggleType="Radio"
+                                          IsChecked="{Binding Sessions.IsRetentionDay, Mode=OneWay}"
+                                          Command="{Binding Sessions.SetRetentionCommand}"
+                                          CommandParameter="day" />
+                                <MenuItem Header="For a week" ToggleType="Radio"
+                                          IsChecked="{Binding Sessions.IsRetentionWeek, Mode=OneWay}"
+                                          Command="{Binding Sessions.SetRetentionCommand}"
+                                          CommandParameter="week" />
+                                <MenuItem Header="For a month" ToggleType="Radio"
+                                          IsChecked="{Binding Sessions.IsRetentionMonth, Mode=OneWay}"
+                                          Command="{Binding Sessions.SetRetentionCommand}"
+                                          CommandParameter="month" />
+                                <MenuItem Header="Forever" ToggleType="Radio"
+                                          IsChecked="{Binding Sessions.IsRetentionForever, Mode=OneWay}"
+                                          Command="{Binding Sessions.SetRetentionCommand}"
+                                          CommandParameter="forever" />
+                            </MenuItem>
+                        </MenuItem>
                         <MenuItem Header="Mod tools" FontSize="13">
                             <MenuItem Header="Retarget mod…"
                                       Command="{Binding ModTools.OpenRetargetCommand}" />
@@ -60,6 +87,9 @@
                         <TextBlock FontSize="12" Foreground="#E89B9B" VerticalAlignment="Center"
                                    Text="{Binding ModTools.ErrorText}" TextTrimming="CharacterEllipsis" MaxWidth="420"
                                    IsVisible="{Binding ModTools.ErrorText, Converter={x:Static ObjectConverters.IsNotNull}}" />
+                        <TextBlock FontSize="12" Foreground="#E89B9B" VerticalAlignment="Center"
+                                   Text="{Binding Sessions.ErrorText}" TextTrimming="CharacterEllipsis" MaxWidth="420"
+                                   IsVisible="{Binding Sessions.ErrorText, Converter={x:Static ObjectConverters.IsNotNull}}" />
                         <Border Background="{StaticResource MoonAccentDimBrush}" CornerRadius="999" Padding="10,3"
                                 IsVisible="{Binding Penumbra.IsLinked}">
                             <TextBlock FontSize="11" FontWeight="SemiBold" Foreground="#221A1F"
@@ -359,6 +389,84 @@
                     <ProgressBar IsIndeterminate="True" Width="120" Height="4" />
                     <TextBlock Classes="dim" Text="{Binding ModTools.BusyText}" FontSize="12" />
                 </StackPanel>
+            </Border>
+        </Border>
+
+        <!-- Sessions: files touched this session -->
+        <Border Background="#C0141216" IsVisible="{Binding Sessions.IsFilesPanelOpen}">
+            <Border VerticalAlignment="Center" HorizontalAlignment="Center"
+                    Background="{StaticResource MoonPanelBrush}"
+                    BorderBrush="{StaticResource MoonBorderBrush}" BorderThickness="1"
+                    CornerRadius="12" Padding="24,20" Width="560" MaxHeight="520">
+                <DockPanel>
+                    <TextBlock DockPanel.Dock="Top" Classes="title" FontSize="16" Text="Session files" />
+                    <TextBlock DockPanel.Dock="Top" Classes="dim" FontSize="12" TextWrapping="Wrap" Margin="0,6,0,10"
+                               Text="{Binding Sessions.FilesSummary}" />
+                    <Button DockPanel.Dock="Bottom" Classes="primary" Content="Close" HorizontalAlignment="Right"
+                            Margin="0,14,0,0" Command="{Binding Sessions.CloseFilesPanelCommand}" />
+                    <ScrollViewer>
+                        <ItemsControl ItemsSource="{Binding Sessions.TouchedFiles}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate x:DataType="vm:TouchedFileRow">
+                                    <DockPanel Margin="0,0,0,6">
+                                        <TextBlock DockPanel.Dock="Right" FontSize="11" Margin="8,1,0,0"
+                                                   Foreground="{StaticResource MoonAccentDimBrush}"
+                                                   Text="{Binding Kind}" />
+                                        <StackPanel Spacing="1">
+                                            <TextBlock FontSize="12" FontWeight="SemiBold" Text="{Binding ItemName}"
+                                                       TextTrimming="CharacterEllipsis" />
+                                            <TextBlock Classes="dim" FontSize="11" Text="{Binding GamePath}"
+                                                       TextTrimming="CharacterEllipsis" />
+                                        </StackPanel>
+                                    </DockPanel>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </ScrollViewer>
+                </DockPanel>
+            </Border>
+        </Border>
+
+        <!-- Sessions: connect to a previous session -->
+        <Border Background="#C0141216" IsVisible="{Binding Sessions.IsConnectPanelOpen}">
+            <Border VerticalAlignment="Center" HorizontalAlignment="Center"
+                    Background="{StaticResource MoonPanelBrush}"
+                    BorderBrush="{StaticResource MoonBorderBrush}" BorderThickness="1"
+                    CornerRadius="12" Padding="24,20" Width="520" MaxHeight="520">
+                <DockPanel>
+                    <TextBlock DockPanel.Dock="Top" Classes="title" FontSize="16" Text="Connect to a previous session" />
+                    <TextBlock DockPanel.Dock="Top" Classes="dim" FontSize="12" TextWrapping="Wrap" Margin="0,6,0,10"
+                               Text="The selected session's edits become active again and new edits continue in it. The current session stays saved and can be reconnected the same way." />
+
+                    <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" Spacing="8"
+                                HorizontalAlignment="Right" Margin="0,14,0,0">
+                        <Button Content="Cancel" Command="{Binding Sessions.CancelConnectCommand}" />
+                        <Button Classes="primary" Content="Connect" Command="{Binding Sessions.ConnectCommand}"
+                                IsEnabled="{Binding Sessions.HasPreviousSessions}" />
+                    </StackPanel>
+
+                    <TextBlock DockPanel.Dock="Bottom" FontSize="12" Foreground="#E89B9B" TextWrapping="Wrap"
+                               Margin="0,8,0,0" Text="{Binding Sessions.ErrorText}"
+                               IsVisible="{Binding Sessions.ErrorText, Converter={x:Static ObjectConverters.IsNotNull}}" />
+
+                    <TextBlock Classes="dim" FontSize="12" TextWrapping="Wrap"
+                               Text="There are no previous sessions with edits to connect to."
+                               IsVisible="{Binding !Sessions.HasPreviousSessions}" />
+
+                    <ListBox FontSize="12" ItemsSource="{Binding Sessions.PreviousSessions}"
+                             SelectedItem="{Binding Sessions.SelectedSession}"
+                             IsVisible="{Binding Sessions.HasPreviousSessions}">
+                        <ListBox.ItemTemplate>
+                            <DataTemplate x:DataType="vm:SessionChoice">
+                                <StackPanel Spacing="2">
+                                    <TextBlock Text="{Binding Title}" FontSize="12" FontWeight="SemiBold" />
+                                    <TextBlock Text="{Binding Detail}" FontSize="11" Classes="dim"
+                                               TextTrimming="CharacterEllipsis" />
+                                </StackPanel>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+                </DockPanel>
             </Border>
         </Border>
 

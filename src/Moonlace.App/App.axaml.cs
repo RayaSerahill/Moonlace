@@ -99,6 +99,7 @@ public partial class App : Application
         services.AddSingleton<SetupViewModel>();
         services.AddSingleton<PenumbraViewModel>();
         services.AddSingleton<FilesViewModel>();
+        services.AddSingleton<SessionsViewModel>();
         services.AddSingleton<ModToolsViewModel>();
         services.AddSingleton<EditorViewModel>();
         services.AddSingleton<BrowserViewModel>();

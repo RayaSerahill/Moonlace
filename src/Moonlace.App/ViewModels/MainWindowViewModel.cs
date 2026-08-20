@@ -30,6 +30,8 @@ public partial class MainWindowViewModel : ViewModelBase
 
     public ModToolsViewModel ModTools { get; }
 
+    public SessionsViewModel Sessions { get; }
+
     [ObservableProperty]
     private ViewModelBase _currentView;
 
@@ -52,6 +54,7 @@ public partial class MainWindowViewModel : ViewModelBase
         PenumbraViewModel penumbra,
         FilesViewModel files,
         ModToolsViewModel modTools,
+        SessionsViewModel sessions,
         ILogger<MainWindowViewModel> logger)
     {
         _settings = settings;
@@ -62,12 +65,14 @@ public partial class MainWindowViewModel : ViewModelBase
         Penumbra = penumbra;
         Files = files;
         ModTools = modTools;
+        Sessions = sessions;
         _logger = logger;
 
         _currentView = setup;
         Setup.InstallationConfirmed += gameDir => _ = InitializeGameDataAsync(gameDir);
         Penumbra.AssetsChanged += () => _ = Browser.RefreshEffectiveAssetsAsync();
         Files.AssetsChanged += () => _ = Browser.RefreshEffectiveAssetsAsync();
+        Sessions.AssetsChanged += () => _ = Browser.RefreshEffectiveAssetsAsync();
     }
 
     /// <summary>Called once at startup: revalidate the saved path and skip setup when it holds.</summary>
@@ -76,6 +81,8 @@ public partial class MainWindowViewModel : ViewModelBase
         // Fire-and-forget: the update pill appears whenever the check finds
         // something, without ever delaying startup.
         _ = CheckForUpdatesAsync();
+
+        Sessions.Initialize();
 
         var saved = _settings.Load().GamePath;
         var result = InstallationValidator.Validate(saved);
