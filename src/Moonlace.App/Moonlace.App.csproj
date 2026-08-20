@@ -7,7 +7,7 @@
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <!-- The executable consumers see. -->
     <AssemblyName>Moonlace</AssemblyName>
-    <Version>2.2.1</Version>
+    <Version>2.3.0</Version>
     <Product>Moonlace</Product>
     <Description>A Linux-first desktop workbench for FFXIV models and Penumbra mods.</Description>
   </PropertyGroup>
