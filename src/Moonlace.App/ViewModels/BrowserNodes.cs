@@ -8,15 +8,15 @@ namespace Moonlace.App.ViewModels;
 
 /// <summary>
 /// A collapsible category row in the item browser: a main category ("Gear",
-/// "Accessories", "Body") or a subcategory under it ("Feet", "Rings",
-/// "Faces"). Collapsed by default; searching overrides the collapse state
-/// without touching it.
+/// "Accessories", "Body"), a subcategory under it ("Feet", "Rings",
+/// "Faces"), or a deeper body-part group ("Female", "Miqo'te"). Collapsed by
+/// default; searching overrides the collapse state without touching it.
 /// </summary>
 public partial class CategoryNode : ViewModelBase
 {
     public required string Label { get; init; }
 
-    /// <summary>0 = main category, 1 = subcategory.</summary>
+    /// <summary>Nesting depth: 0 = main category, 1 = subcategory, 2/3 = body-part gender/race groups. Drives the indent.</summary>
     public required int Level { get; init; }
 
     [ObservableProperty]
@@ -35,12 +35,15 @@ public partial class CategoryNode : ViewModelBase
     public Thickness Indent => new(Level * 16, 0, 0, 0);
 }
 
-/// <summary>A selectable item row under a subcategory.</summary>
-public sealed class ItemNode(EquipmentItem item)
+/// <summary>A selectable item row under a category at any depth.</summary>
+public sealed class ItemNode(EquipmentItem item, int categoryLevel = 1)
 {
     public EquipmentItem Item { get; } = item;
 
     public string Name => Item.Name;
+
+    /// <summary>Indents item rows one step past their category's header.</summary>
+    public Thickness Indent => new(categoryLevel * 16 + 10, 0, 0, 0);
 
     public string SlotLabel => Item.Slot switch
     {

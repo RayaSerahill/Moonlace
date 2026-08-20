@@ -8,19 +8,21 @@ using CommunityToolkit.Mvvm.Input;
 using Microsoft.Extensions.Logging;
 using Moonlace.Core.Interfaces;
 using Moonlace.Core.Models;
+using Moonlace.GameData.Resolution;
 
 namespace Moonlace.App.ViewModels;
 
 /// <summary>
 /// The item browser: a categorized, collapsible tree (Gear / Accessories /
-/// Body, each with slot subcategories) flattened into one virtualized list,
+/// Body, each with slot subcategories; body parts nest further into gender
+/// and race groups) flattened into one virtualized list,
 /// plus search and selection. Selecting an item loads its render model
 /// asynchronously; rapid re-selection cancels the previous load so a slow
 /// older load can never overwrite a newer selection.
 /// </summary>
 public partial class BrowserViewModel : ViewModelBase
 {
-    private sealed record SubcategorySpec(string Label, EquipSlot[] Slots);
+    private sealed record SubcategorySpec(string Label, EquipSlot[] Slots, bool GroupByRace = false);
 
     private sealed record CategorySpec(string Label, SubcategorySpec[] Subcategories);
 
@@ -45,10 +47,10 @@ public partial class BrowserViewModel : ViewModelBase
         ]),
         new("Body",
         [
-            new("Faces", [EquipSlot.Face]),
-            new("Hair", [EquipSlot.Hair]),
-            new("Tails", [EquipSlot.Tail]),
-            new("Bodies", [EquipSlot.HumanBody]),
+            new("Faces", [EquipSlot.Face], GroupByRace: true),
+            new("Hair", [EquipSlot.Hair], GroupByRace: true),
+            new("Tails", [EquipSlot.Tail], GroupByRace: true),
+            new("Bodies", [EquipSlot.HumanBody], GroupByRace: true),
         ]),
     ];
 
@@ -58,7 +60,7 @@ public partial class BrowserViewModel : ViewModelBase
 
     private IReadOnlyList<EquipmentItem> _allItems = [];
     private List<CategoryNode> _categories = [];
-    private Dictionary<uint, (ItemNode Node, CategoryNode Main, CategoryNode Sub)> _nodesByRowId = [];
+    private Dictionary<uint, (ItemNode Node, CategoryNode[] Path)> _nodesByRowId = [];
     private ItemNode? _selectedItemNode;
     private bool _syncingSelection;
     private CancellationTokenSource? _loadCts;
@@ -161,14 +163,13 @@ public partial class BrowserViewModel : ViewModelBase
             foreach (var subSpec in categorySpec.Subcategories)
             {
                 var sub = new CategoryNode { Label = subSpec.Label, Level = 1 };
-                foreach (var item in subSpec.Slots.SelectMany(slot => bySlot[slot]))
-                {
-                    var node = new ItemNode(item);
-                    sub.Items.Add(node);
-                    _nodesByRowId[item.RowId] = (node, main, sub);
-                }
+                var items = subSpec.Slots.SelectMany(slot => bySlot[slot]);
+                if (subSpec.GroupByRace)
+                    AddGenderRaceGroups(main, sub, items);
+                else
+                    AddItems(sub, [main, sub], items);
 
-                if (sub.Items.Count > 0)
+                if (sub.TotalItems > 0)
                     main.Children.Add(sub);
             }
 
@@ -176,6 +177,50 @@ public partial class BrowserViewModel : ViewModelBase
                 _categories.Add(main);
         }
     }
+
+    /// <summary>
+    /// Body parts nest two levels deeper than gear: kind › gender › race
+    /// (e.g. Body › Hair › Female › Miqo'te), keeping the race table's
+    /// canonical race order inside each gender.
+    /// </summary>
+    private void AddGenderRaceGroups(CategoryNode main, CategoryNode sub, IEnumerable<EquipmentItem> items)
+    {
+        var byRace = items.ToLookup(i => i.RaceCode ?? "");
+        foreach (var (genderLabel, female) in new[] { ("Female", true), ("Male", false) })
+        {
+            var gender = new CategoryNode { Label = genderLabel, Level = 2 };
+            foreach (var race in AssetPathResolver.KnownRaces)
+            {
+                if (IsFemaleRaceCode(race.Code) != female)
+                    continue;
+
+                var raceNode = new CategoryNode { Label = RaceName(race.Label), Level = 3 };
+                AddItems(raceNode, [main, sub, gender, raceNode], byRace[race.Code]);
+                if (raceNode.Items.Count > 0)
+                    gender.Children.Add(raceNode);
+            }
+
+            if (gender.Children.Count > 0)
+                sub.Children.Add(gender);
+        }
+    }
+
+    private void AddItems(CategoryNode parent, CategoryNode[] path, IEnumerable<EquipmentItem> items)
+    {
+        foreach (var item in items)
+        {
+            var node = new ItemNode(item, parent.Level);
+            parent.Items.Add(node);
+            _nodesByRowId[item.RowId] = (node, path);
+        }
+    }
+
+    /// <summary>Race codes pair up as male odd / female even ("0701" Miqo'te ♂, "0801" Miqo'te ♀).</summary>
+    private static bool IsFemaleRaceCode(string raceCode) =>
+        int.TryParse(raceCode.AsSpan(0, 2), out var race) && race % 2 == 0;
+
+    /// <summary>"Miqo'te ♀" → "Miqo'te"; the gender is its own tree level.</summary>
+    private static string RaceName(string label) => label.TrimEnd('♂', '♀', ' ');
 
     /// <summary>
     /// Flattens the tree into the visible rows. A non-empty search shows all
@@ -186,38 +231,45 @@ public partial class BrowserViewModel : ViewModelBase
     private void RebuildVisibleNodes()
     {
         var query = SearchText.Trim();
-        var searching = query.Length > 0;
         var visible = new List<object>();
 
         foreach (var main in _categories)
-        {
-            var subs = new List<(CategoryNode Sub, IReadOnlyList<ItemNode> Items)>();
-            foreach (var sub in main.Children)
-            {
-                IReadOnlyList<ItemNode> items = searching
-                    ? sub.Items.Where(n => n.Name.Contains(query, StringComparison.OrdinalIgnoreCase)).ToArray()
-                    : sub.Items;
-                if (searching && items.Count == 0)
-                    continue;
-                subs.Add((sub, items));
-            }
-
-            if (searching && subs.Count == 0)
-                continue;
-
-            visible.Add(main);
-            if (!searching && !main.IsExpanded)
-                continue;
-
-            foreach (var (sub, items) in subs)
-            {
-                visible.Add(sub);
-                if (searching || sub.IsExpanded)
-                    visible.AddRange(items);
-            }
-        }
+            AppendVisibleRows(main, query.Length > 0 ? query : null, visible);
 
         VisibleNodes = visible;
+    }
+
+    /// <summary>
+    /// Appends one category branch depth-first. While searching, headers are
+    /// force-expanded and a branch whose items all miss the query removes its
+    /// own header again; otherwise each node's expansion state decides.
+    /// Returns whether the branch contributed any matching item.
+    /// </summary>
+    private static bool AppendVisibleRows(CategoryNode node, string? query, List<object> visible)
+    {
+        var headerIndex = visible.Count;
+        visible.Add(node);
+
+        if (query is null && !node.IsExpanded)
+            return true;
+
+        var anyMatch = false;
+        foreach (var child in node.Children)
+            anyMatch |= AppendVisibleRows(child, query, visible);
+
+        foreach (var item in node.Items)
+        {
+            if (query is not null && !item.Name.Contains(query, StringComparison.OrdinalIgnoreCase))
+                continue;
+            visible.Add(item);
+            anyMatch = true;
+        }
+
+        // Empty branches removed everything they appended, so the header to
+        // drop is still the last row.
+        if (query is not null && !anyMatch)
+            visible.RemoveAt(headerIndex);
+        return anyMatch;
     }
 
     partial void OnSearchTextChanged(string value)
@@ -288,8 +340,8 @@ public partial class BrowserViewModel : ViewModelBase
             return;
         }
 
-        entry.Main.IsExpanded = true;
-        entry.Sub.IsExpanded = true;
+        foreach (var ancestor in entry.Path)
+            ancestor.IsExpanded = true;
         RebuildVisibleNodes();
         _selectedItemNode = entry.Node;
         RestoreSelectedNode();

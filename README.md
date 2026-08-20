@@ -104,7 +104,7 @@ The left panel contains three main sections:
 * **Accessories**
 * **Body**
 
-Body includes things such as faces, hairstyles, tails, and body models.
+Body includes things such as faces, hairstyles, tails, and body models, grouped further by gender and race.
 
 Expand a category manually or type into the search box to filter the entire tree. Search results remain grouped under their original categories.
 

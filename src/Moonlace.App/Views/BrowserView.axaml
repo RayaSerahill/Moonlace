@@ -47,7 +47,7 @@
 
                                 <!-- Item rows -->
                                 <DataTemplate DataType="vm:ItemNode">
-                                    <StackPanel Orientation="Vertical" Spacing="1" Margin="26,0,0,0">
+                                    <StackPanel Orientation="Vertical" Spacing="1" Margin="{Binding Indent}">
                                         <TextBlock Text="{Binding Name}" TextTrimming="CharacterEllipsis" />
                                         <TextBlock Classes="dim" FontSize="11" Text="{Binding SlotLabel}" />
                                     </StackPanel>
