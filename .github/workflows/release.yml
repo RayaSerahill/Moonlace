@@ -1,0 +1,52 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build & Publish Release
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Verify tag matches project version
+        shell: bash
+        run: |
+          PROJECT_VERSION=$(grep -oPm1 '(?<=<Version>)[^<]+' src/Moonlace.App/Moonlace.App.csproj)
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+
+          echo "Project version: $PROJECT_VERSION"
+          echo "Tag version:     $TAG_VERSION"
+
+          if [ "$PROJECT_VERSION" != "$TAG_VERSION" ]; then
+            echo "::error::Tag v$TAG_VERSION does not match project version $PROJECT_VERSION"
+            exit 1
+          fi
+
+      - name: Run tests
+        run: dotnet test Moonlace.slnx -c Release
+
+      - name: Install Velopack CLI
+        run: dotnet tool install --global vpk --version 1.2.0
+
+      - name: Build and publish release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          chmod +x scripts/build-release.sh
+          scripts/build-release.sh --upload

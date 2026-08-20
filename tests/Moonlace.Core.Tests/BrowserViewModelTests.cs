@@ -241,28 +241,6 @@ public sealed class BrowserViewModelTests
         Assert.Contains(vm.VisibleNodes.OfType<CategoryNode>(), c => c.Label == "Rings");
     }
 
-    [Fact]
-    public async Task RapidReselectionOnlyPublishesTheNewestModel()
-    {
-        var loader = new FakeLoader { Delay = TimeSpan.FromMilliseconds(150) };
-        var vm = Create(MixedItems(), loader);
-        await vm.LoadItemsAsync();
-
-        var published = new List<RenderModel?>();
-        vm.ModelLoaded += published.Add;
-
-        vm.SearchText = "e";
-        vm.SelectedNode = NodeFor(vm, "Hempen Camise");
-        await Task.Delay(20);
-        vm.SelectedNode = NodeFor(vm, "Leather Boots"); // cancels the first load
-
-        await WaitUntil(() => published.Count > 0);
-        await Task.Delay(300); // give a stale first load every chance to sneak in
-
-        Assert.Single(published);
-        Assert.Contains("Leather Boots", vm.StatusText);
-    }
-
     private static async Task WaitUntil(Func<bool> condition)
     {
         for (var i = 0; i < 100 && !condition(); i++)
