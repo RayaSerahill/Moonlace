@@ -51,6 +51,7 @@ public sealed class RealGameDataTests : IDisposable
         Assert.Contains(items, i => i.Slot == EquipSlot.Face && i.RaceCode == "0101");
         Assert.Contains(items, i => i.Slot == EquipSlot.Tail);
         Assert.Contains(items, i => i.Slot == EquipSlot.HumanBody);
+        Assert.Contains(items, i => i.Slot == EquipSlot.Hair && i.RaceCode == "0101");
         Assert.All(items, i => Assert.False(string.IsNullOrWhiteSpace(i.Name)));
     }
 

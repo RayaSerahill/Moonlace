@@ -58,6 +58,7 @@ public sealed class ItemNode(EquipmentItem item)
         EquipSlot.Face => "Face",
         EquipSlot.Tail => "Tail",
         EquipSlot.HumanBody => "Body model",
+        EquipSlot.Hair => "Hair",
         _ => Item.Slot.ToString(),
     };
 }

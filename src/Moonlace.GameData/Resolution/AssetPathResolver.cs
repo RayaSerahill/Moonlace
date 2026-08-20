@@ -164,6 +164,7 @@ public sealed partial class AssetPathResolver
             EquipSlot.Face => ("face", 'f', "fac"),
             EquipSlot.Tail => ("tail", 't', "til"),
             EquipSlot.HumanBody => ("body", 'b', "top"),
+            EquipSlot.Hair => ("hair", 'h', "hir"),
             _ => throw new ArgumentOutOfRangeException(nameof(item)),
         };
 

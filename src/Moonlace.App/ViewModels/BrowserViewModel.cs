@@ -46,6 +46,7 @@ public partial class BrowserViewModel : ViewModelBase
         new("Body",
         [
             new("Faces", [EquipSlot.Face]),
+            new("Hair", [EquipSlot.Hair]),
             new("Tails", [EquipSlot.Tail]),
             new("Bodies", [EquipSlot.HumanBody]),
         ]),

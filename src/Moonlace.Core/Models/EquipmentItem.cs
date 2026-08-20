@@ -29,5 +29,6 @@ public sealed class EquipmentItem
     public bool IsAccessory => Slot is EquipSlot.Ears or EquipSlot.Neck or EquipSlot.Wrists
         or EquipSlot.RightRing or EquipSlot.LeftRing;
 
-    public bool IsBodyPart => Slot is EquipSlot.Face or EquipSlot.Tail or EquipSlot.HumanBody;
+    public bool IsBodyPart => Slot is EquipSlot.Face or EquipSlot.Tail or EquipSlot.HumanBody
+        or EquipSlot.Hair;
 }
