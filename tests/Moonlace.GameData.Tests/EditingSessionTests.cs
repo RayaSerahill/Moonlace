@@ -138,10 +138,10 @@ public sealed class EditingSessionTests : IDisposable
 
         var before = await builder.LoadAsync(item);
         var glb = Path.Combine(_tempRoot, "export.glb");
-        await editing.ExportModelGltfAsync(item, glb);
+        await editing.ExportModelAsync(item, glb);
         Assert.True(new FileInfo(glb).Length > 1024);
 
-        await editing.ImportModelGltfAsync(item, glb);
+        await editing.ImportModelAsync(item, glb);
         Assert.True(session.IsDirty);
         Assert.Single(session.Entries, e => e.Kind == SessionAssetKind.Model);
 
@@ -169,7 +169,7 @@ public sealed class EditingSessionTests : IDisposable
         var bogus = Path.Combine(_tempRoot, "bogus.glb");
         await File.WriteAllTextAsync(bogus, "this is not a gltf");
 
-        await Assert.ThrowsAsync<Interchange.ModelImportException>(() => editing.ImportModelGltfAsync(item, bogus));
+        await Assert.ThrowsAsync<Interchange.ModelImportException>(() => editing.ImportModelAsync(item, bogus));
         Assert.False(session.IsDirty);
     }
 

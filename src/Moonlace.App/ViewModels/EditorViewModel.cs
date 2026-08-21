@@ -465,7 +465,7 @@ public partial class EditorViewModel : ViewModelBase
         if (path is null)
             return;
 
-        await RunOperationAsync("Exporting GLTF…", () => _editing.ExportModelGltfAsync(_item, path));
+        await RunOperationAsync("Exporting GLTF…", () => _editing.ExportModelAsync(_item, path));
     }
 
     [RelayCommand]
@@ -479,7 +479,7 @@ public partial class EditorViewModel : ViewModelBase
 
         await RunOperationAsync("Importing model…", async () =>
         {
-            await _editing.ImportModelGltfAsync(_item, path);
+            await _editing.ImportModelAsync(_item, path);
             await RefreshAsync();
             NotifyAssetsChanged();
         });
