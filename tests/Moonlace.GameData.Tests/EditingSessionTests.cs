@@ -169,7 +169,7 @@ public sealed class EditingSessionTests : IDisposable
         var bogus = Path.Combine(_tempRoot, "bogus.glb");
         await File.WriteAllTextAsync(bogus, "this is not a gltf");
 
-        await Assert.ThrowsAsync<Interchange.GltfImportException>(() => editing.ImportModelGltfAsync(item, bogus));
+        await Assert.ThrowsAsync<Interchange.ModelImportException>(() => editing.ImportModelGltfAsync(item, bogus));
         Assert.False(session.IsDirty);
     }
 

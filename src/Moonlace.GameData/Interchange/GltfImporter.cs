@@ -4,8 +4,6 @@ using SharpGLTF.Schema2;
 
 namespace Moonlace.GameData.Interchange;
 
-public sealed class GltfImportException(string message, Exception? inner = null) : Exception(message, inner);
-
 /// <summary>
 /// Imports a GLTF/GLB as a replacement for an existing FFXIV model. The
 /// original parsed model acts as the template: material slots are mapped by
@@ -15,9 +13,7 @@ public sealed class GltfImportException(string message, Exception? inner = null)
 /// </summary>
 public static class GltfImporter
 {
-    public sealed record ImportResult(IReadOnlyList<ParsedMesh> Meshes, IReadOnlyList<ushort[]> BoneTables);
-
-    public static ImportResult Import(string path, ParsedModel template)
+    public static ModelImportResult Import(string path, ParsedModel template)
     {
         ModelRoot gltf;
         try
@@ -26,7 +22,7 @@ public static class GltfImporter
         }
         catch (Exception ex)
         {
-            throw new GltfImportException(
+            throw new ModelImportException(
                 $"\"{Path.GetFileName(path)}\" could not be read as a GLTF/GLB file: {ex.Message}", ex);
         }
 
@@ -34,7 +30,7 @@ public static class GltfImporter
             .SelectMany(mesh => mesh.Primitives.Select(p => (Mesh: mesh, Primitive: p)))
             .ToList();
         if (primitives.Count == 0)
-            throw new GltfImportException("The file contains no meshes.");
+            throw new ModelImportException("The file contains no meshes.");
 
         // Joint index (per skin) → template bone-list index, resolved by name.
         var boneIndexByName = new Dictionary<string, ushort>(StringComparer.Ordinal);
@@ -49,7 +45,7 @@ public static class GltfImporter
             {
                 var jointName = skin.GetJoint(j).Joint.Name ?? $"joint_{j}";
                 if (!boneIndexByName.TryGetValue(jointName, out var boneIndex))
-                    throw new GltfImportException(
+                    throw new ModelImportException(
                         $"The model is weighted to bone \"{jointName}\", which does not exist in the original " +
                         "FFXIV model. Keep the vertex groups that came with the exported model.");
                 map[j] = boneIndex;
@@ -77,29 +73,30 @@ public static class GltfImporter
             var label = primitive.Material?.Name is { Length: > 0 } n ? n : (mesh.Name ?? $"primitive {pi}");
 
             if (primitive.DrawPrimitiveType != PrimitiveType.TRIANGLES)
-                throw new GltfImportException(
+                throw new ModelImportException(
                     $"\"{label}\" uses {primitive.DrawPrimitiveType}; only triangle meshes are supported.");
 
-            var materialIndex = ResolveMaterialIndex(primitive, pi, primitives.Count, template, label);
+            var materialIndex = ModelImportShared.ResolveMaterialIndex(
+                primitive.Material?.Name, pi, primitives.Count, template, label);
             var templateMesh = pi < template.Meshes.Count ? template.Meshes[pi] : template.Meshes[0];
             var boneTableIndex = Math.Min(templateMesh.BoneTableIndex, boneTables.Count - 1);
 
             var positions = primitive.GetVertexAccessor("POSITION")?.AsVector3Array()
-                ?? throw new GltfImportException($"\"{label}\" has no vertex positions.");
+                ?? throw new ModelImportException($"\"{label}\" has no vertex positions.");
             if (positions.Count == 0)
-                throw new GltfImportException($"\"{label}\" has no vertices.");
+                throw new ModelImportException($"\"{label}\" has no vertices.");
             if (positions.Count > ushort.MaxValue)
-                throw new GltfImportException(
+                throw new ModelImportException(
                     $"\"{label}\" has {positions.Count:N0} vertices; FFXIV models support at most 65,535 per mesh. " +
                     "Split the mesh or reduce its vertex count.");
 
             var normals = primitive.GetVertexAccessor("NORMAL")?.AsVector3Array();
             if (normals is null)
-                throw new GltfImportException(
+                throw new ModelImportException(
                     $"\"{label}\" has no normals. Export from Blender with normals enabled.");
 
             var uvs = primitive.GetVertexAccessor("TEXCOORD_0")?.AsVector2Array()
-                ?? throw new GltfImportException(
+                ?? throw new ModelImportException(
                     $"\"{label}\" has no UV coordinates (TEXCOORD_0), which FFXIV materials require.");
 
             var tangents = primitive.GetVertexAccessor("TANGENT")?.AsVector4Array();
@@ -128,12 +125,12 @@ public static class GltfImporter
             }
 
             var indexAccessor = primitive.GetIndexAccessor()
-                ?? throw new GltfImportException($"\"{label}\" has no triangle indices.");
+                ?? throw new ModelImportException($"\"{label}\" has no triangle indices.");
             var indices = indexAccessor.AsIndicesArray().ToArray();
             if (indices.Length == 0 || indices.Length % 3 != 0)
-                throw new GltfImportException($"\"{label}\" has a malformed triangle list ({indices.Length} indices).");
+                throw new ModelImportException($"\"{label}\" has a malformed triangle list ({indices.Length} indices).");
             if (indices.Max() >= vertices.Length)
-                throw new GltfImportException($"\"{label}\" has indices pointing beyond its vertex data.");
+                throw new ModelImportException($"\"{label}\" has indices pointing beyond its vertex data.");
 
             meshes.Add(new ParsedMesh
             {
@@ -145,29 +142,7 @@ public static class GltfImporter
             });
         }
 
-        return new ImportResult(meshes, boneTables.Select(t => t.ToArray()).ToArray());
-    }
-
-    private static int ResolveMaterialIndex(
-        MeshPrimitive primitive, int primitiveIndex, int primitiveCount, ParsedModel template, string label)
-    {
-        var materialName = primitive.Material?.Name;
-        if (!string.IsNullOrEmpty(materialName))
-        {
-            for (var i = 0; i < template.MaterialNames.Count; i++)
-            {
-                if (string.Equals(template.MaterialNames[i], materialName, StringComparison.Ordinal))
-                    return i;
-            }
-        }
-
-        // No name match: fall back to order only when it is unambiguous.
-        if (primitiveCount <= template.MaterialNames.Count)
-            return Math.Min(primitiveIndex, template.MaterialNames.Count - 1);
-
-        throw new GltfImportException(
-            $"Cannot map \"{label}\" to an FFXIV material. Name the GLTF materials after the original ones " +
-            $"({string.Join(", ", template.MaterialNames)}) — the exported model already does this.");
+        return new ModelImportResult(meshes, boneTables.Select(t => t.ToArray()).ToArray());
     }
 
     private static (Vector4 Weights, uint IndicesPacked) MapSkinning(
@@ -175,8 +150,8 @@ public static class GltfImporter
     {
         if (joints is null || weights is null || skinMap is null)
         {
-            EnsureInTable(boneTable, 0, label);
-            return (new Vector4(1, 0, 0, 0), (uint)IndexInTable(boneTable, 0));
+            ModelImportShared.EnsureInTable(boneTable, 0, label);
+            return (new Vector4(1, 0, 0, 0), (uint)ModelImportShared.IndexInTable(boneTable, 0));
         }
 
         var j = joints.Value;
@@ -191,31 +166,20 @@ public static class GltfImporter
                 continue;
 
             var boneIndex = skinMap[joint];
-            EnsureInTable(boneTable, boneIndex, label);
+            ModelImportShared.EnsureInTable(boneTable, boneIndex, label);
             outWeights[influence] = weight;
-            outIndices[influence] = (byte)IndexInTable(boneTable, boneIndex);
+            outIndices[influence] = (byte)ModelImportShared.IndexInTable(boneTable, boneIndex);
         }
 
         var sum = outWeights[0] + outWeights[1] + outWeights[2] + outWeights[3];
         if (sum <= 0)
         {
-            EnsureInTable(boneTable, 0, label);
-            return (new Vector4(1, 0, 0, 0), (uint)IndexInTable(boneTable, 0));
+            ModelImportShared.EnsureInTable(boneTable, 0, label);
+            return (new Vector4(1, 0, 0, 0), (uint)ModelImportShared.IndexInTable(boneTable, 0));
         }
 
         var packed = (uint)outIndices[0] | ((uint)outIndices[1] << 8) | ((uint)outIndices[2] << 16) | ((uint)outIndices[3] << 24);
         return (new Vector4(outWeights[0], outWeights[1], outWeights[2], outWeights[3]) / sum, packed);
     }
 
-    private static void EnsureInTable(List<ushort> boneTable, ushort boneIndex, string label)
-    {
-        if (boneTable.Contains(boneIndex))
-            return;
-        if (boneTable.Count >= 64)
-            throw new GltfImportException(
-                $"\"{label}\" uses more than 64 distinct bones in one mesh, which the model format cannot store.");
-        boneTable.Add(boneIndex);
-    }
-
-    private static int IndexInTable(List<ushort> boneTable, ushort boneIndex) => boneTable.IndexOf(boneIndex);
 }

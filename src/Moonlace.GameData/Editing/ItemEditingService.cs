@@ -381,7 +381,7 @@ public sealed class ItemEditingService
                         normalPng = EncodeTexture(parsed.TexturePaths.FirstOrDefault(p => TextureRole(p) == "Normal"));
                     }
 
-                    return new GltfMaterialInfo { Name = name, BaseColorPng = basePng, NormalPng = normalPng };
+                    return new ModelMaterialInfo { Name = name, BaseColorPng = basePng, NormalPng = normalPng };
                 })
                 .ToArray();
 
@@ -405,7 +405,7 @@ public sealed class ItemEditingService
             // Sanity: our own parser must accept what we are about to store.
             var check = MdlParser.Parse(written);
             if (check.Meshes.Count != import.Meshes.Count)
-                throw new GltfImportException("Internal error: the rebuilt model failed verification.");
+                throw new ModelImportException("Internal error: the rebuilt model failed verification.");
 
             Store(resolved.MdlPath, SessionAssetKind.Model, written);
             _logger.LogInformation("Imported {Gltf} as session model for {Path} ({Meshes} meshes)",
