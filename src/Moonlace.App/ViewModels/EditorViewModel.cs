@@ -456,37 +456,33 @@ public partial class EditorViewModel : ViewModelBase
     // --- Model tab commands ---
 
     [RelayCommand]
-    private async Task ExportGltfAsync()
+    private async Task ExportModelAsync(string? format)
     {
         if (_item is null)
             return;
-        var path = await _files.SaveFileAsync(
-            "Export model as GLTF", SafeName(_item.Name) + ".glb", "Binary GLTF", ["*.glb"]);
+        var path = format == "fbx"
+            ? await _files.SaveFileAsync(
+                "Export model as FBX", SafeName(_item.Name) + ".fbx", "FBX", ["*.fbx"])
+            : await _files.SaveFileAsync(
+                "Export model as GLTF", SafeName(_item.Name) + ".glb", "Binary GLTF", ["*.glb"]);
         if (path is null)
             return;
 
-        await RunOperationAsync("Exporting GLTF…", () => _editing.ExportModelAsync(_item, path));
+        await RunOperationAsync(format == "fbx" ? "Exporting FBX…" : "Exporting GLTF…",
+            () => _editing.ExportModelAsync(_item, path));
     }
 
     [RelayCommand]
-    private async Task ExportFbxAsync()
+    private async Task ImportModelAsync(string? format)
     {
         if (_item is null)
             return;
-        var path = await _files.SaveFileAsync(
-            "Export model as FBX", SafeName(_item.Name) + ".fbx", "FBX", ["*.fbx"]);
-        if (path is null)
-            return;
-
-        await RunOperationAsync("Exporting FBX…", () => _editing.ExportModelAsync(_item, path));
-    }
-
-    [RelayCommand]
-    private async Task ImportModelAsync()
-    {
-        if (_item is null)
-            return;
-        var path = await _files.OpenFileAsync("Import model", "Model files", ["*.glb", "*.gltf", "*.fbx"]);
+        var path = format switch
+        {
+            "gltf" => await _files.OpenFileAsync("Import GLTF model", "GLTF files", ["*.glb", "*.gltf"]),
+            "fbx" => await _files.OpenFileAsync("Import FBX model", "FBX files", ["*.fbx"]),
+            _ => await _files.OpenFileAsync("Import model", "Model files", ["*.glb", "*.gltf", "*.fbx"]),
+        };
         if (path is null)
             return;
 
