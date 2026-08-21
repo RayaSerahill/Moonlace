@@ -503,18 +503,5 @@ public sealed class ItemEditingService
         return decoded is null ? null : ImageIo.EncodePng(decoded.Width, decoded.Height, decoded.Rgba);
     }
 
-    internal static string TextureRole(string texPath)
-    {
-        var stem = Path.GetFileNameWithoutExtension(texPath);
-        var suffix = stem[(stem.LastIndexOf('_') + 1)..];
-        return suffix switch
-        {
-            "d" or "base" => "Diffuse",
-            "n" or "norm" => "Normal",
-            "m" or "mask" => "Mask",
-            "id" or "index" => "Index",
-            "s" or "spec" => "Specular",
-            _ => "Other",
-        };
-    }
+    internal static string TextureRole(string texPath) => TextureRoles.Classify(texPath).ToString();
 }

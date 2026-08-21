@@ -46,7 +46,7 @@ public static class MdlParser
         Color = 7,
     }
 
-    private readonly record struct VertexElement(byte Stream, byte Offset, byte Type, byte Usage);
+    private readonly record struct VertexElement(byte Stream, byte Offset, byte Type, byte Usage, byte UsageIndex);
 
     public static ParsedModel Parse(byte[] data)
     {
@@ -78,10 +78,11 @@ public static class MdlParser
                 var offset = r.ReadByte();
                 var type = r.ReadByte();
                 var usage = r.ReadByte();
-                r.Skip(4); // usage index + padding
+                var usageIndex = r.ReadByte();
+                r.Skip(3); // padding
                 if (stream == 255)
                     break;
-                elements.Add(new VertexElement(stream, offset, type, usage));
+                elements.Add(new VertexElement(stream, offset, type, usage, usageIndex));
             }
 
             declarations.Add([.. elements]);
@@ -281,6 +282,14 @@ public static class MdlParser
             if (usage is not (VertexUsage.Position or VertexUsage.Normal or VertexUsage.Uv
                 or VertexUsage.Tangent1 or VertexUsage.Color
                 or VertexUsage.BlendWeights or VertexUsage.BlendIndices))
+                continue;
+
+            // TexTools-written models declare second channels (UV2, vertex
+            // color 2) as extra elements of the same usage with usage index 1.
+            // v1 consumes only the first channel; without this check the
+            // second channel would overwrite it (UV2 is often a constant,
+            // which flattened every texture lookup to one texel).
+            if (element.UsageIndex != 0)
                 continue;
 
             var stride = mesh.VertexBufferStrides[element.Stream];
