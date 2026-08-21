@@ -7,17 +7,6 @@ using SharpGLTF.Scenes;
 
 namespace Moonlace.GameData.Interchange;
 
-/// <summary>Per-material data attached to a GLTF export.</summary>
-public sealed class GltfMaterialInfo
-{
-    /// <summary>The FFXIV material name (e.g. "/mt_w0201b0001_a.mtrl"); round-trips through Blender for re-import mapping.</summary>
-    public required string Name { get; init; }
-
-    public byte[]? BaseColorPng { get; init; }
-
-    public byte[]? NormalPng { get; init; }
-}
-
 /// <summary>
 /// Exports the effective model as a binary GLTF (.glb) aimed at Blender
 /// interop: geometry, normals, tangents, UVs, vertex colors, skin weights
@@ -30,7 +19,7 @@ public sealed class GltfMaterialInfo
 /// </summary>
 public static class GltfExporter
 {
-    public static void Export(ParsedModel model, IReadOnlyList<GltfMaterialInfo> materials, string outputPath)
+    public static void Export(ParsedModel model, IReadOnlyList<ModelMaterialInfo> materials, string outputPath)
     {
         var scene = new SceneBuilder("moonlace");
 

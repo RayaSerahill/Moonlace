@@ -359,8 +359,11 @@ public sealed class ItemEditingService
         return stored + 1;
     }
 
-    /// <summary>Exports the effective model (session version when modified) as .glb. Does not touch session state.</summary>
-    public Task ExportModelGltfAsync(EquipmentItem item, string outputPath, CancellationToken ct = default)
+    private static bool IsFbxPath(string path)
+        => string.Equals(Path.GetExtension(path), ".fbx", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>Exports the effective model (session version when modified) as .glb or .fbx, picked by extension. Does not touch session state.</summary>
+    public Task ExportModelAsync(EquipmentItem item, string outputPath, CancellationToken ct = default)
     {
         return Task.Run(() =>
         {
@@ -381,35 +384,41 @@ public sealed class ItemEditingService
                         normalPng = EncodeTexture(parsed.TexturePaths.FirstOrDefault(p => TextureRole(p) == "Normal"));
                     }
 
-                    return new GltfMaterialInfo { Name = name, BaseColorPng = basePng, NormalPng = normalPng };
+                    return new ModelMaterialInfo { Name = name, BaseColorPng = basePng, NormalPng = normalPng };
                 })
                 .ToArray();
 
             ct.ThrowIfCancellationRequested();
-            GltfExporter.Export(model, materials, outputPath);
-            _logger.LogInformation("Exported {Path} as GLTF to {Out}", resolved.MdlPath, outputPath);
+            if (IsFbxPath(outputPath))
+                FbxExporter.Export(model, materials, outputPath);
+            else
+                GltfExporter.Export(model, materials, outputPath);
+            _logger.LogInformation("Exported {Path} as {Format} to {Out}",
+                resolved.MdlPath, IsFbxPath(outputPath) ? "FBX" : "GLTF", outputPath);
         }, ct);
     }
 
-    /// <summary>Imports a GLTF/GLB as the session replacement for the item's model and stores it in the session.</summary>
-    public Task ImportModelGltfAsync(EquipmentItem item, string gltfPath, CancellationToken ct = default)
+    /// <summary>Imports a GLTF/GLB or FBX (picked by extension) as the session replacement for the item's model and stores it in the session.</summary>
+    public Task ImportModelAsync(EquipmentItem item, string modelPath, CancellationToken ct = default)
     {
         return Task.Run(() =>
         {
             var resolved = _resolver.Resolve(item);
             var template = ParseEffectiveModel(resolved);
 
-            var import = GltfImporter.Import(gltfPath, template);
+            var import = IsFbxPath(modelPath)
+                ? FbxImporter.Import(modelPath, template)
+                : GltfImporter.Import(modelPath, template);
             var written = MdlWriter.Write(template, import.Meshes, import.BoneTables);
 
             // Sanity: our own parser must accept what we are about to store.
             var check = MdlParser.Parse(written);
             if (check.Meshes.Count != import.Meshes.Count)
-                throw new GltfImportException("Internal error: the rebuilt model failed verification.");
+                throw new ModelImportException("Internal error: the rebuilt model failed verification.");
 
             Store(resolved.MdlPath, SessionAssetKind.Model, written);
-            _logger.LogInformation("Imported {Gltf} as session model for {Path} ({Meshes} meshes)",
-                gltfPath, resolved.MdlPath, import.Meshes.Count);
+            _logger.LogInformation("Imported {Model} as session model for {Path} ({Meshes} meshes)",
+                modelPath, resolved.MdlPath, import.Meshes.Count);
         }, ct);
     }
 

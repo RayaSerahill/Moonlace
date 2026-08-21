@@ -121,10 +121,35 @@
                                         </StackPanel>
 
                                         <TextBlock Classes="dim" FontSize="12" TextWrapping="Wrap"
-                                                   Text="Export the model to edit its meshes in Blender, then import the result. Keep the material names and vertex groups that come with the export." />
+                                                   Text="Export the model as GLTF or FBX to edit its meshes in Blender, then import the result. Keep the material names and vertex groups that come with the export." />
                                         <StackPanel Orientation="Horizontal" Spacing="8">
-                                            <Button Content="Export GLTF…" Command="{Binding Editor.ExportGltfCommand}" />
-                                            <Button Content="Import GLTF…" Command="{Binding Editor.ImportGltfCommand}" />
+                                            <SplitButton Content="Export GLTF…"
+                                                         Command="{Binding Editor.ExportModelCommand}"
+                                                         CommandParameter="gltf">
+                                                <SplitButton.Flyout>
+                                                    <MenuFlyout Placement="BottomEdgeAlignedRight">
+                                                        <MenuItem Header="Export GLTF…"
+                                                                  Command="{Binding Editor.ExportModelCommand}"
+                                                                  CommandParameter="gltf" />
+                                                        <MenuItem Header="Export FBX…"
+                                                                  Command="{Binding Editor.ExportModelCommand}"
+                                                                  CommandParameter="fbx" />
+                                                    </MenuFlyout>
+                                                </SplitButton.Flyout>
+                                            </SplitButton>
+                                            <SplitButton Content="Import model…"
+                                                         Command="{Binding Editor.ImportModelCommand}">
+                                                <SplitButton.Flyout>
+                                                    <MenuFlyout Placement="BottomEdgeAlignedRight">
+                                                        <MenuItem Header="Import GLTF…"
+                                                                  Command="{Binding Editor.ImportModelCommand}"
+                                                                  CommandParameter="gltf" />
+                                                        <MenuItem Header="Import FBX…"
+                                                                  Command="{Binding Editor.ImportModelCommand}"
+                                                                  CommandParameter="fbx" />
+                                                    </MenuFlyout>
+                                                </SplitButton.Flyout>
+                                            </SplitButton>
                                         </StackPanel>
 
                                         <Rectangle Height="1" Fill="{StaticResource MoonBorderBrush}" Margin="0,4" />
