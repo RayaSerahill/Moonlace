@@ -84,6 +84,14 @@
             <Setter Property="FontWeight" Value="SemiBold" />
         </Style>
 
+        <Style Selector="SplitButton">
+            <Setter Property="Background" Value="{StaticResource MoonPanelHoverBrush}" />
+            <Setter Property="Foreground" Value="{StaticResource MoonTextBrush}" />
+            <Setter Property="BorderBrush" Value="{StaticResource MoonBorderBrush}" />
+            <Setter Property="CornerRadius" Value="8" />
+            <Setter Property="Padding" Value="14,7" />
+        </Style>
+
         <!-- Chromeless row-filling button for spoiler rows in the item tree;
              the ListBoxItem underneath provides the hover feedback. -->
         <Style Selector="Button.treeToggle">
