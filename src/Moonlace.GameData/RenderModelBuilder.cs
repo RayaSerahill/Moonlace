@@ -120,23 +120,21 @@ public sealed class RenderModelBuilder : IRenderModelLoader
             foreach (var texPath in parsed.TexturePaths)
             {
                 // FFXIV texture roles are identifiable from the filename suffix.
-                var stem = Path.GetFileNameWithoutExtension(texPath);
-                var suffix = stem[(stem.LastIndexOf('_') + 1)..];
-                switch (suffix)
+                switch (TextureRoles.Classify(texPath))
                 {
-                    case "d" or "base":
+                    case TextureRole.Diffuse:
                         diffuse = _textures.Decode(texPath);
                         break;
-                    case "n" or "norm":
+                    case TextureRole.Normal:
                         normal = _textures.Decode(texPath);
                         break;
-                    case "m" or "mask":
+                    case TextureRole.Mask:
                         mask = _textures.Decode(texPath);
                         break;
-                    case "id" or "index":
+                    case TextureRole.Index:
                         index = _textures.Decode(texPath);
                         break;
-                    case "s" or "spec":
+                    case TextureRole.Specular:
                         specular = _textures.Decode(texPath);
                         break;
                     default:
