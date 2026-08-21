@@ -469,11 +469,24 @@ public partial class EditorViewModel : ViewModelBase
     }
 
     [RelayCommand]
-    private async Task ImportGltfAsync()
+    private async Task ExportFbxAsync()
     {
         if (_item is null)
             return;
-        var path = await _files.OpenFileAsync("Import GLTF model", "GLTF models", ["*.glb", "*.gltf"]);
+        var path = await _files.SaveFileAsync(
+            "Export model as FBX", SafeName(_item.Name) + ".fbx", "FBX", ["*.fbx"]);
+        if (path is null)
+            return;
+
+        await RunOperationAsync("Exporting FBX…", () => _editing.ExportModelAsync(_item, path));
+    }
+
+    [RelayCommand]
+    private async Task ImportModelAsync()
+    {
+        if (_item is null)
+            return;
+        var path = await _files.OpenFileAsync("Import model", "Model files", ["*.glb", "*.gltf", "*.fbx"]);
         if (path is null)
             return;
 
