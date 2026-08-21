@@ -20,7 +20,7 @@ Your actual FFXIV installation stays read-only the entire time.
   Models are rendered with their actual textures, materials, color tables, and race or gender variants.
 
 * **Edit without touching the game files**
-  Export models as GLTF, edit them in Blender, then import them back into Moonlace. Recolor material tables, replace textures, and reassign materials per mesh while seeing the results live.
+  Export models as GLTF or FBX, edit them in Blender, then import them back into Moonlace. Recolor material tables, replace textures, and reassign materials per mesh while seeing the results live.
 
 * **Live-edit Penumbra mods**
   Link an installed Penumbra mod and edit its files directly. Moonlace respects the mod's option structure and backs up every file before its first change, so the whole session can be reverted later.
@@ -122,7 +122,7 @@ Tiny digital dress-up doll controls. Very serious software.
 
 ### Model editing
 
-The **Model** tab lets you export and import GLTF files for Blender round-tripping.
+The **Model** tab lets you export and import GLTF and FBX files for Blender round-tripping.
 
 Bone weights are included, and imported models can be previewed immediately.
 
