@@ -10,6 +10,8 @@ namespace Moonlace.GameData.Interchange;
 /// material name (falling back to primitive order when unambiguous), skin
 /// weights are remapped through joint names onto the template's bone list,
 /// and per-mesh bone tables are extended as needed (up to the format's 64).
+/// Part-named meshes ("mesh_2.1") are regrouped into their FFXIV mesh with
+/// the submesh partition — and the template's attribute masks — restored.
 /// </summary>
 public static class GltfImporter
 {
@@ -66,20 +68,71 @@ public static class GltfImporter
         if (boneTables.Count == 0)
             boneTables.Add([]);
 
-        var meshes = new List<ParsedMesh>();
-        for (var pi = 0; pi < primitives.Count; pi++)
+        // Group primitives into meshes: part-named primitives ("mesh_2.1",
+        // written by the exporter per submesh) regroup by mesh number so the
+        // partition and its attributes survive; other names import whole.
+        var groups = new List<(int? TemplateMeshIndex, List<(Mesh Mesh, MeshPrimitive Primitive, int PartNumber)> Parts)>();
+        var groupByMeshNumber = new Dictionary<int, int>();
+        foreach (var (mesh, primitive) in primitives)
         {
-            var (mesh, primitive) = primitives[pi];
-            var label = primitive.Material?.Name is { Length: > 0 } n ? n : (mesh.Name ?? $"primitive {pi}");
+            if (ModelImportShared.TryParsePartName(mesh.Name, out var meshNumber, out var partNumber))
+            {
+                if (!groupByMeshNumber.TryGetValue(meshNumber, out var g))
+                {
+                    groupByMeshNumber[meshNumber] = g = groups.Count;
+                    groups.Add((meshNumber, []));
+                }
 
+                groups[g].Parts.Add((mesh, primitive, partNumber));
+            }
+            else
+            {
+                groups.Add((null, [(mesh, primitive, -1)]));
+            }
+        }
+
+        var meshes = new List<ParsedMesh>();
+        for (var gi = 0; gi < groups.Count; gi++)
+        {
+            var (templateMeshIndex, parts) = groups[gi];
+            var first = parts[0];
+            var groupLabel = first.Primitive.Material?.Name is { Length: > 0 } n ? n : (first.Mesh.Name ?? $"mesh {gi}");
+
+            var materialIndex = ModelImportShared.ResolveMaterialIndex(
+                first.Primitive.Material?.Name, gi, groups.Count, template, groupLabel);
+            var templateMesh = templateMeshIndex is { } tmi && tmi < template.Meshes.Count
+                ? template.Meshes[tmi]
+                : gi < template.Meshes.Count ? template.Meshes[gi] : template.Meshes[0];
+            var boneTableIndex = Math.Min(templateMesh.BoneTableIndex, boneTables.Count - 1);
+
+            var importedParts = new List<ModelImportShared.ImportedPart>();
+            foreach (var (mesh, primitive, partNumber) in parts)
+            {
+                var label = primitive.Material?.Name is { Length: > 0 } pn ? pn : (mesh.Name ?? groupLabel);
+                if (primitive.Material?.Name is { Length: > 0 } partMaterial
+                    && ModelImportShared.ResolveMaterialIndex(partMaterial, gi, groups.Count, template, label) != materialIndex)
+                    throw new ModelImportException(
+                        $"The parts of \"{groupLabel}\" use different materials; an FFXIV mesh has exactly one. " +
+                        "Give all parts of a mesh the same material.");
+
+                var (vertices, indices) = ImportPrimitive(mesh, primitive, label, boneTables[boneTableIndex]);
+                importedParts.Add(new ModelImportShared.ImportedPart(vertices, indices, partNumber, label));
+            }
+
+            meshes.Add(ModelImportShared.MergeParts(
+                importedParts,
+                templateMeshIndex is not null ? templateMesh : null,
+                materialIndex, template.MaterialNames[materialIndex], boneTableIndex));
+        }
+
+        return new ModelImportResult(meshes, boneTables.Select(t => t.ToArray()).ToArray());
+
+        (ParsedVertex[] Vertices, uint[] Indices) ImportPrimitive(
+            Mesh mesh, MeshPrimitive primitive, string label, List<ushort> table)
+        {
             if (primitive.DrawPrimitiveType != PrimitiveType.TRIANGLES)
                 throw new ModelImportException(
                     $"\"{label}\" uses {primitive.DrawPrimitiveType}; only triangle meshes are supported.");
-
-            var materialIndex = ModelImportShared.ResolveMaterialIndex(
-                primitive.Material?.Name, pi, primitives.Count, template, label);
-            var templateMesh = pi < template.Meshes.Count ? template.Meshes[pi] : template.Meshes[0];
-            var boneTableIndex = Math.Min(templateMesh.BoneTableIndex, boneTables.Count - 1);
 
             var positions = primitive.GetVertexAccessor("POSITION")?.AsVector3Array()
                 ?? throw new ModelImportException($"\"{label}\" has no vertex positions.");
@@ -105,7 +158,6 @@ public static class GltfImporter
             var weightsAccessor = primitive.GetVertexAccessor("WEIGHTS_0")?.AsVector4Array();
 
             var skinMap = skinByMesh.TryGetValue(mesh, out var skin) ? skinMaps[skin] : null;
-            var table = boneTables[boneTableIndex];
 
             var vertices = new ParsedVertex[positions.Count];
             for (var i = 0; i < vertices.Length; i++)
@@ -132,17 +184,8 @@ public static class GltfImporter
             if (indices.Max() >= vertices.Length)
                 throw new ModelImportException($"\"{label}\" has indices pointing beyond its vertex data.");
 
-            meshes.Add(new ParsedMesh
-            {
-                Vertices = vertices,
-                Indices = indices,
-                MaterialIndex = materialIndex,
-                MaterialName = template.MaterialNames[materialIndex],
-                BoneTableIndex = boneTableIndex,
-            });
+            return (vertices, indices);
         }
-
-        return new ModelImportResult(meshes, boneTables.Select(t => t.ToArray()).ToArray());
     }
 
     private static (Vector4 Weights, uint IndicesPacked) MapSkinning(
