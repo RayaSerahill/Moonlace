@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using Moonlace.GameData.Parsing;
 
 namespace Moonlace.GameData.Interchange;
@@ -59,4 +60,98 @@ internal static class ModelImportShared
     }
 
     public static int IndexInTable(List<ushort> boneTable, ushort boneIndex) => boneTable.IndexOf(boneIndex);
+
+    private static readonly Regex PartNamePattern = new(@"^mesh_(\d+)\.(\d+)", RegexOptions.Compiled);
+
+    /// <summary>The export name for one submesh part of a mesh.</summary>
+    public static string PartName(int meshIndex, int partIndex) => $"mesh_{meshIndex}.{partIndex}";
+
+    /// <summary>
+    /// Recognizes the exporters' "mesh_2.1" part naming (tolerating Blender's
+    /// ".001" duplicate suffixes after the part number). Plain "mesh_2" names
+    /// from part-unaware exports do not match; those meshes import whole.
+    /// </summary>
+    public static bool TryParsePartName(string? name, out int meshIndex, out int partIndex)
+    {
+        meshIndex = 0;
+        partIndex = 0;
+        if (name is null)
+            return false;
+        var match = PartNamePattern.Match(name);
+        if (!match.Success)
+            return false;
+        meshIndex = int.Parse(match.Groups[1].Value);
+        partIndex = int.Parse(match.Groups[2].Value);
+        return true;
+    }
+
+    /// <summary>One imported part before its group is merged into a mesh.</summary>
+    public sealed record ImportedPart(ParsedVertex[] Vertices, uint[] Indices, int PartNumber, string Label);
+
+    /// <summary>
+    /// Merges a group of imported parts (ordered by part number) into one
+    /// mesh whose submesh partition mirrors the parts. Attribute masks and
+    /// bone map slices are restored from the template mesh's submesh at the
+    /// same part number; parts the template does not know get no attributes.
+    /// A single part with an unknown part number (a part-unaware import)
+    /// yields no partition at all, matching the previous behavior.
+    /// </summary>
+    public static ParsedMesh MergeParts(
+        IReadOnlyList<ImportedPart> parts, ParsedMesh? templateMesh,
+        int materialIndex, string materialName, int boneTableIndex)
+    {
+        if (parts.Count == 1 && parts[0].PartNumber < 0)
+        {
+            return new ParsedMesh
+            {
+                Vertices = parts[0].Vertices,
+                Indices = parts[0].Indices,
+                MaterialIndex = materialIndex,
+                MaterialName = materialName,
+                BoneTableIndex = boneTableIndex,
+            };
+        }
+
+        var ordered = parts.OrderBy(p => p.PartNumber).ToArray();
+        var totalVertices = ordered.Sum(p => p.Vertices.Length);
+        if (totalVertices > ushort.MaxValue)
+            throw new ModelImportException(
+                $"The parts of \"{ordered[0].Label}\" total {totalVertices:N0} vertices; FFXIV models support " +
+                "at most 65,535 per mesh. Reduce the vertex count.");
+
+        var vertices = new ParsedVertex[totalVertices];
+        var indices = new uint[ordered.Sum(p => p.Indices.Length)];
+        var submeshes = new List<ParsedSubmesh>(ordered.Length);
+        var vertexBase = 0;
+        var indexBase = 0;
+        foreach (var part in ordered)
+        {
+            part.Vertices.CopyTo(vertices, vertexBase);
+            for (var i = 0; i < part.Indices.Length; i++)
+                indices[indexBase + i] = (uint)(part.Indices[i] + vertexBase);
+
+            var template = templateMesh is not null && part.PartNumber < templateMesh.Submeshes.Count
+                ? templateMesh.Submeshes[part.PartNumber]
+                : default;
+            submeshes.Add(new ParsedSubmesh(
+                IndexOffset: (uint)indexBase,
+                IndexCount: (uint)part.Indices.Length,
+                AttributeMask: template.AttributeMask,
+                BoneStartIndex: template.BoneStartIndex,
+                BoneCount: template.BoneCount));
+
+            vertexBase += part.Vertices.Length;
+            indexBase += part.Indices.Length;
+        }
+
+        return new ParsedMesh
+        {
+            Vertices = vertices,
+            Indices = indices,
+            MaterialIndex = materialIndex,
+            MaterialName = materialName,
+            BoneTableIndex = boneTableIndex,
+            Submeshes = submeshes,
+        };
+    }
 }

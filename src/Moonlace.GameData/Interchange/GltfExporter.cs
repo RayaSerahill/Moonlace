@@ -40,6 +40,9 @@ public static class GltfExporter
         var root = new NodeBuilder("n_root");
         var joints = model.BoneNames.Select(name => root.CreateNode(name)).ToArray();
 
+        // Each submesh becomes its own named node ("mesh_2.1") so the part
+        // partition — and with it attribute visibility — survives a Blender
+        // round trip; the importer regroups parts by name.
         var meshIndex = 0;
         foreach (var mesh in model.Meshes)
         {
@@ -51,26 +54,35 @@ public static class GltfExporter
                 ? materialBuilders[mesh.MaterialIndex]
                 : fallbackMaterial;
 
-            var builder = new MeshBuilder<VertexPositionNormalTangent, VertexColor1Texture1, VertexJoints4>(
-                $"mesh_{meshIndex}");
-            var primitive = builder.UsePrimitive(material);
-
             var vertices = mesh.Vertices
                 .Select(v => BuildVertex(v, boneTable, model.BoneNames.Count))
                 .ToArray();
 
-            for (var i = 0; i + 2 < mesh.Indices.Length; i += 3)
+            IEnumerable<(string Name, int Offset, int Count)> parts = mesh.Submeshes.Count > 0
+                ? mesh.Submeshes.Select((s, p) => (Name: ModelImportShared.PartName(meshIndex, p),
+                    Offset: (int)s.IndexOffset, Count: (int)s.IndexCount))
+                : [(Name: $"mesh_{meshIndex}", Offset: 0, Count: mesh.Indices.Length)];
+
+            foreach (var part in parts)
             {
-                primitive.AddTriangle(
-                    vertices[mesh.Indices[i]],
-                    vertices[mesh.Indices[i + 1]],
-                    vertices[mesh.Indices[i + 2]]);
+                var builder = new MeshBuilder<VertexPositionNormalTangent, VertexColor1Texture1, VertexJoints4>(
+                    part.Name);
+                var primitive = builder.UsePrimitive(material);
+
+                for (var i = part.Offset; i + 2 < part.Offset + part.Count; i += 3)
+                {
+                    primitive.AddTriangle(
+                        vertices[mesh.Indices[i]],
+                        vertices[mesh.Indices[i + 1]],
+                        vertices[mesh.Indices[i + 2]]);
+                }
+
+                if (joints.Length > 0)
+                    scene.AddSkinnedMesh(builder, Matrix4x4.Identity, joints);
+                else
+                    scene.AddRigidMesh(builder, Matrix4x4.Identity);
             }
 
-            if (joints.Length > 0)
-                scene.AddSkinnedMesh(builder, Matrix4x4.Identity, joints);
-            else
-                scene.AddRigidMesh(builder, Matrix4x4.Identity);
             meshIndex++;
         }
 

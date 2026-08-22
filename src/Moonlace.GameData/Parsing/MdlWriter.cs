@@ -9,10 +9,13 @@ namespace Moonlace.GameData.Parsing;
 /// and which Lumina's own reader can parse — giving an independent
 /// verification path for round-trip tests.
 ///
-/// The writer reuses the template's string table, name-offset arrays and
-/// element IDs verbatim (so all string offsets stay valid), rebuilds vertex
-/// declarations/meshes/submeshes/LODs/bounds from the new geometry, converts
-/// bone tables to the v5 encoding, and drops shape (morph) data.
+/// The writer reuses the template's string table, name-offset arrays,
+/// element IDs and submesh bone map verbatim (so all string offsets stay
+/// valid), rebuilds vertex declarations/meshes/LODs/bounds from the new
+/// geometry, preserves each mesh's submesh partition and attribute masks
+/// (falling back to one covering submesh when the partition no longer fits
+/// the geometry), converts bone tables to the v5 encoding, and drops shape
+/// (morph) data.
 /// </summary>
 public static class MdlWriter
 {
@@ -35,6 +38,7 @@ public static class MdlWriter
         var vertexData = new MemoryStream();
         var indexData = new MemoryStream();
         var meshRecords = new List<MeshRecord>();
+        var submeshRecords = new List<ParsedSubmesh>();
         foreach (var mesh in meshes)
         {
             var rec = new MeshRecord
@@ -52,6 +56,21 @@ public static class MdlWriter
             // Index data is 16-byte aligned between meshes in official files.
             while (indexData.Position % 16 != 0)
                 indexData.WriteByte(0);
+
+            // Preserve the mesh's submesh partition (attribute masks, bone
+            // map slices) when it still fits the geometry; otherwise emit one
+            // covering submesh with no attributes, as for imported geometry.
+            rec.SubmeshIndex = submeshRecords.Count;
+            var partition = mesh.Submeshes;
+            if (partition.Count == 0 || partition.Any(s =>
+                    s.IndexOffset > mesh.Indices.Length || s.IndexOffset + s.IndexCount > mesh.Indices.Length))
+            {
+                partition = [new ParsedSubmesh(0, (uint)mesh.Indices.Length, 0, 0, 0)];
+            }
+
+            foreach (var sub in partition)
+                submeshRecords.Add(sub with { IndexOffset = rec.StartIndex + sub.IndexOffset });
+            rec.SubmeshCount = submeshRecords.Count - rec.SubmeshIndex;
 
             meshRecords.Add(rec);
         }
@@ -80,7 +99,7 @@ public static class MdlWriter
         WriteU32(runtime, (uint)edit.StringsRaw.Length);
         runtime.Write(edit.StringsRaw);
 
-        WriteModelHeader(runtime, edit, radius, meshes.Count, boneTables.Count);
+        WriteModelHeader(runtime, edit, radius, meshes.Count, submeshRecords.Count, boneTables.Count);
         runtime.Write(edit.ElementIdsRaw);
 
         var totalIndices = meshes.Sum(m => m.Indices.Length);
@@ -88,19 +107,18 @@ public static class MdlWriter
             WriteLod(runtime, edit, meshes.Count, totalIndices, (uint)vertexBytes.Length, (uint)indexBytes.Length);
 
         foreach (var rec in meshRecords)
-            WriteMesh(runtime, rec, meshRecords.IndexOf(rec));
+            WriteMesh(runtime, rec);
 
         foreach (var offset in edit.AttributeNameOffsets)
             WriteU32(runtime, offset);
 
-        // Submeshes: one per mesh, all attributes visible, no bone map slice.
-        foreach (var rec in meshRecords)
+        foreach (var sub in submeshRecords)
         {
-            WriteU32(runtime, rec.StartIndex);
-            WriteU32(runtime, (uint)rec.Mesh.Indices.Length);
-            WriteU32(runtime, 0); // attribute mask
-            WriteU16(runtime, 0); // bone start index
-            WriteU16(runtime, 0); // bone count
+            WriteU32(runtime, sub.IndexOffset);
+            WriteU32(runtime, sub.IndexCount);
+            WriteU32(runtime, sub.AttributeMask);
+            WriteU16(runtime, sub.BoneStartIndex);
+            WriteU16(runtime, sub.BoneCount);
         }
 
         foreach (var offset in edit.MaterialNameOffsets)
@@ -116,7 +134,8 @@ public static class MdlWriter
             WriteU32(runtime, (uint)table.Length);
         }
 
-        WriteU32(runtime, 0); // submesh bone map byte size
+        WriteU32(runtime, (uint)edit.SubmeshBoneMapRaw.Length);
+        runtime.Write(edit.SubmeshBoneMapRaw);
         runtime.WriteByte(0); // padding amount
 
         for (var box = 0; box < 4; box++)
@@ -168,14 +187,18 @@ public static class MdlWriter
         public uint Stream1Offset { get; set; }
 
         public uint StartIndex { get; set; }
+
+        public int SubmeshIndex { get; set; }
+
+        public int SubmeshCount { get; set; }
     }
 
-    private static void WriteModelHeader(MemoryStream s, MdlEditData edit, float radius, int meshCount, int boneTableCount)
+    private static void WriteModelHeader(MemoryStream s, MdlEditData edit, float radius, int meshCount, int submeshCount, int boneTableCount)
     {
         WriteF32(s, radius);
         WriteU16(s, (ushort)meshCount);
         WriteU16(s, (ushort)edit.AttributeNameOffsets.Length);
-        WriteU16(s, (ushort)meshCount); // submesh count (one per mesh)
+        WriteU16(s, (ushort)submeshCount);
         WriteU16(s, (ushort)edit.MaterialNameOffsets.Length);
         WriteU16(s, (ushort)edit.BoneNameOffsets.Length);
         WriteU16(s, (ushort)boneTableCount);
@@ -219,14 +242,14 @@ public static class MdlWriter
         WriteU32(s, 0); // index data offset
     }
 
-    private static void WriteMesh(MemoryStream s, MeshRecord rec, int meshIndex)
+    private static void WriteMesh(MemoryStream s, MeshRecord rec)
     {
         WriteU16(s, (ushort)rec.Mesh.Vertices.Length);
         WriteU16(s, 0);
         WriteU32(s, (uint)rec.Mesh.Indices.Length);
         WriteU16(s, (ushort)rec.Mesh.MaterialIndex);
-        WriteU16(s, (ushort)meshIndex); // submesh index (1:1)
-        WriteU16(s, 1); // submesh count
+        WriteU16(s, (ushort)rec.SubmeshIndex);
+        WriteU16(s, (ushort)rec.SubmeshCount);
         WriteU16(s, (ushort)rec.Mesh.BoneTableIndex);
         WriteU32(s, rec.StartIndex);
         WriteU32(s, rec.Stream0Offset);
