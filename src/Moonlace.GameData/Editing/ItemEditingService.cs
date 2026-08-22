@@ -192,6 +192,7 @@ public sealed class ItemEditingService
                         MaterialIndex = materialIndex,
                         MaterialName = template.MaterialNames[materialIndex],
                         BoneTableIndex = mesh.BoneTableIndex,
+                        Submeshes = mesh.Submeshes,
                     };
                 })
                 .ToArray();
