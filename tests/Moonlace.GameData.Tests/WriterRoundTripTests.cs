@@ -34,11 +34,13 @@ public sealed class WriterRoundTripTests : IDisposable
 
     private const string WeaponMdl = "chara/weapon/w0201/obj/body/b0001/model/w0201b0001.mdl";
     private const string BodyMdl = "chara/equipment/e0001/model/c0101e0001_top.mdl";
+    private const string DawntrailMdl = "chara/equipment/e6100/model/c0101e6100_top.mdl";
     private const string WeaponMtrl = "chara/weapon/w0201/obj/body/b0001/material/v0005/mt_w0201b0001_a.mtrl";
 
     [SkippableTheory]
     [InlineData(WeaponMdl)]
     [InlineData(BodyMdl)]
+    [InlineData(DawntrailMdl)] // v6 with shape data before the submesh bone map
     public void MdlWriteReadRoundTripPreservesGeometry(string path)
     {
         Skip.IfNot(TryInit());
@@ -50,6 +52,8 @@ public sealed class WriterRoundTripTests : IDisposable
 
         Assert.Equal(original.Meshes.Count, reparsed.Meshes.Count);
         Assert.Equal(original.MaterialNames, reparsed.MaterialNames);
+        Assert.Equal(original.AttributeNames, reparsed.AttributeNames);
+        Assert.Equal(original.EditData!.SubmeshBoneMapRaw, reparsed.EditData!.SubmeshBoneMapRaw);
         Assert.Equal(original.BoneNames, reparsed.BoneNames);
         Assert.Equal(original.BoneTables.Count, reparsed.BoneTables.Count);
         for (var t = 0; t < original.BoneTables.Count; t++)
@@ -62,6 +66,7 @@ public sealed class WriterRoundTripTests : IDisposable
             Assert.Equal(a.Indices, b.Indices);
             Assert.Equal(a.MaterialIndex, b.MaterialIndex);
             Assert.Equal(a.BoneTableIndex, b.BoneTableIndex);
+            Assert.Equal(a.Submeshes, b.Submeshes);
             Assert.Equal(a.Vertices.Length, b.Vertices.Length);
             for (var v = 0; v < a.Vertices.Length; v += 37) // sample
             {
@@ -100,6 +105,41 @@ public sealed class WriterRoundTripTests : IDisposable
             var v0 = model.Meshes[0].Vertices[0];
             var expected = original.Meshes[0].Vertices[0].Position;
             Assert.True(Math.Abs(v0.Position!.Value.X - expected.X) < 1e-4f, "Lumina-read position mismatch");
+        }
+        finally
+        {
+            File.Delete(tmp);
+        }
+    }
+
+    [SkippableFact]
+    public void WrittenMdlKeepsSubmeshAttributesLuminaCanRead()
+    {
+        Skip.IfNot(TryInit());
+        var original = MdlParser.Parse(_service.Lumina.GetFile(BodyMdl)!.Data);
+
+        // The test is only meaningful on a model that really uses attributes.
+        Assert.NotEmpty(original.AttributeNames);
+        Assert.Contains(original.Meshes, m => m.Submeshes.Any(s => s.AttributeMask != 0));
+
+        var written = MdlWriter.Write(original, original.Meshes, original.BoneTables);
+        var tmp = Path.Combine(Path.GetTempPath(), $"moonlace-test-{Guid.NewGuid():N}.mdl");
+        try
+        {
+            File.WriteAllBytes(tmp, written);
+            var lumina = _service.Lumina.GetFileFromDisk<MdlFile>(tmp, BodyMdl);
+
+            var expected = original.Meshes.SelectMany(m => m.Submeshes).ToArray();
+            Assert.Equal(expected.Length, lumina.Submeshes.Length);
+            for (var i = 0; i < expected.Length; i++)
+            {
+                Assert.Equal(expected[i].IndexCount, lumina.Submeshes[i].IndexCount);
+                Assert.Equal(expected[i].AttributeMask, lumina.Submeshes[i].AttributeIndexMask);
+                Assert.Equal(expected[i].BoneStartIndex, lumina.Submeshes[i].BoneStartIndex);
+                Assert.Equal(expected[i].BoneCount, lumina.Submeshes[i].BoneCount);
+            }
+
+            Assert.Equal(original.EditData!.SubmeshBoneMapRaw.Length / 2, lumina.SubmeshBoneMap.Length);
         }
         finally
         {
