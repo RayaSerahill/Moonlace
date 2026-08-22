@@ -120,6 +120,45 @@ public sealed class FbxRoundTripTests : IDisposable
     }
 
     [Fact]
+    public void SubmeshPartitionSurvivesFbxRoundTrip()
+    {
+        var model = BuildSyntheticModel();
+        var partitioned = new ParsedModel
+        {
+            Meshes =
+            [
+                new ParsedMesh
+                {
+                    Vertices = model.Meshes[0].Vertices,
+                    Indices = model.Meshes[0].Indices,
+                    MaterialName = model.Meshes[0].MaterialName,
+                    MaterialIndex = 0,
+                    BoneTableIndex = 0,
+                    // One triangle per part, with distinct attribute masks
+                    // and bone map slices to verify restoration.
+                    Submeshes =
+                    [
+                        new ParsedSubmesh(0, 3, AttributeMask: 1, BoneStartIndex: 5, BoneCount: 2),
+                        new ParsedSubmesh(3, 3, AttributeMask: 2, BoneStartIndex: 7, BoneCount: 1),
+                    ],
+                },
+            ],
+            MaterialNames = model.MaterialNames,
+            BoneNames = model.BoneNames,
+            BoneTables = model.BoneTables,
+        };
+
+        var fbx = TempFile("parts.fbx");
+        FbxExporter.Export(partitioned, [new ModelMaterialInfo { Name = model.MaterialNames[0] }], fbx);
+
+        var import = FbxImporter.Import(fbx, partitioned);
+        var mesh = Assert.Single(import.Meshes);
+        Assert.Equal(partitioned.Meshes[0].Submeshes, mesh.Submeshes);
+        Assert.Equal(6, mesh.Indices.Length);
+        Assert.Equal(0, mesh.MaterialIndex);
+    }
+
+    [Fact]
     public void GarbageFileIsRejectedWithAClearError()
     {
         var bogus = TempFile("bogus.fbx");
@@ -192,6 +231,7 @@ public sealed class FbxRoundTripTests : IDisposable
             var b = import.Meshes[m];
             Assert.Equal(a.MaterialIndex, b.MaterialIndex);
             Assert.Equal(a.Indices.Length, b.Indices.Length);
+            Assert.Equal(a.Submeshes, b.Submeshes);
             // assimp welds duplicate corners, so counts may shrink but never grow.
             Assert.True(b.Vertices.Length <= a.Vertices.Length, $"mesh {m} gained vertices");
 
