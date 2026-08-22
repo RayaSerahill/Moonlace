@@ -55,21 +55,34 @@ public static class FbxExporter
             children.Add((nint)joint);
         }
 
+        // Each submesh becomes its own named mesh ("mesh_2.1") so the part
+        // partition — and with it attribute visibility — survives a Blender
+        // round trip; the importer regroups parts by name.
         var meshPointers = new List<nint>();
         for (var meshIndex = 0; meshIndex < model.Meshes.Count; meshIndex++)
         {
-            var mesh = BuildMesh(arena, model, meshIndex, materials.Count);
-            meshPointers.Add((nint)mesh);
+            var source = model.Meshes[meshIndex];
+            IEnumerable<(string Name, int Offset, int Count)> parts = source.Submeshes.Count > 0
+                ? source.Submeshes.Select((s, p) => (Name: ModelImportShared.PartName(meshIndex, p),
+                    Offset: (int)s.IndexOffset, Count: (int)s.IndexCount))
+                : [(Name: $"mesh_{meshIndex}", Offset: 0, Count: source.Indices.Length)];
 
-            var meshNode = arena.Alloc<AiNode>();
-            meshNode->MName = mesh->MName;
-            meshNode->MTransformation = Matrix4x4.Identity;
-            meshNode->MParent = root;
-            var indices = arena.Alloc<uint>(1);
-            *indices = (uint)meshIndex;
-            meshNode->MNumMeshes = 1;
-            meshNode->MMeshes = indices;
-            children.Add((nint)meshNode);
+            foreach (var part in parts)
+            {
+                var mesh = BuildMesh(arena, model, meshIndex, part.Name, part.Offset, part.Count, materials.Count);
+
+                var meshNode = arena.Alloc<AiNode>();
+                meshNode->MName = mesh->MName;
+                meshNode->MTransformation = Matrix4x4.Identity;
+                meshNode->MParent = root;
+                var indices = arena.Alloc<uint>(1);
+                *indices = (uint)meshPointers.Count;
+                meshNode->MNumMeshes = 1;
+                meshNode->MMeshes = indices;
+                children.Add((nint)meshNode);
+
+                meshPointers.Add((nint)mesh);
+            }
         }
 
         var childArray = arena.Alloc<nint>(children.Count);
@@ -153,21 +166,40 @@ public static class FbxExporter
         }
     }
 
-    private static unsafe AiMesh* BuildMesh(NativeArena arena, ParsedModel model, int meshIndex, int materialCount)
+    private static unsafe AiMesh* BuildMesh(
+        NativeArena arena, ParsedModel model, int meshIndex, string name, int indexOffset, int indexCount, int materialCount)
     {
         var source = model.Meshes[meshIndex];
         var boneTable = source.BoneTableIndex < model.BoneTables.Count
             ? model.BoneTables[source.BoneTableIndex]
             : [];
 
+        // Compact the part's vertices: FBX meshes own their vertex data, so
+        // only the vertices this part's triangles reference are emitted.
+        var localIndex = new int[source.Vertices.Length];
+        Array.Fill(localIndex, -1);
+        var partVertices = new List<ParsedVertex>();
+        var partIndices = new uint[indexCount];
+        for (var i = 0; i < indexCount; i++)
+        {
+            var v = (int)source.Indices[indexOffset + i];
+            if (localIndex[v] < 0)
+            {
+                localIndex[v] = partVertices.Count;
+                partVertices.Add(source.Vertices[v]);
+            }
+
+            partIndices[i] = (uint)localIndex[v];
+        }
+
         var mesh = arena.Alloc<AiMesh>();
-        mesh->MName = AiString($"mesh_{meshIndex}");
+        mesh->MName = AiString(name);
         mesh->MPrimitiveTypes = (uint)PrimitiveType.Triangle;
         mesh->MMaterialIndex = source.MaterialIndex >= 0 && source.MaterialIndex < materialCount
             ? (uint)source.MaterialIndex
             : (uint)materialCount; // the fallback material appended after the real ones
 
-        var count = source.Vertices.Length;
+        var count = partVertices.Count;
         mesh->MNumVertices = (uint)count;
         var positions = arena.Alloc<Vector3>(count);
         var normals = arena.Alloc<Vector3>(count);
@@ -177,7 +209,7 @@ public static class FbxExporter
         var colors = arena.Alloc<Vector4>(count);
         for (var i = 0; i < count; i++)
         {
-            var v = source.Vertices[i];
+            var v = partVertices[i];
             positions[i] = v.Position * MetersToFbxUnits;
             var normal = v.Normal.LengthSquared() > 1e-6f ? Vector3.Normalize(v.Normal) : Vector3.UnitY;
             normals[i] = normal;
@@ -196,15 +228,15 @@ public static class FbxExporter
         mesh->MNumUVComponents[0] = 2;
         mesh->MColors.Element0 = colors;
 
-        var faceCount = source.Indices.Length / 3;
+        var faceCount = indexCount / 3;
         mesh->MNumFaces = (uint)faceCount;
         var faces = arena.Alloc<AiFace>(faceCount);
         for (var f = 0; f < faceCount; f++)
         {
             var indices = arena.Alloc<uint>(3);
-            indices[0] = source.Indices[f * 3];
-            indices[1] = source.Indices[f * 3 + 1];
-            indices[2] = source.Indices[f * 3 + 2];
+            indices[0] = partIndices[f * 3];
+            indices[1] = partIndices[f * 3 + 1];
+            indices[2] = partIndices[f * 3 + 2];
             faces[f].MNumIndices = 3;
             faces[f].MIndices = indices;
         }
@@ -212,19 +244,19 @@ public static class FbxExporter
         mesh->MFaces = faces;
 
         if (boneTable.Length > 0 && model.BoneNames.Count > 0)
-            BuildBones(arena, mesh, source, boneTable, model);
+            BuildBones(arena, mesh, partVertices, boneTable, model);
 
         return mesh;
     }
 
     private static unsafe void BuildBones(
-        NativeArena arena, AiMesh* mesh, ParsedMesh source, ushort[] boneTable, ParsedModel model)
+        NativeArena arena, AiMesh* mesh, IReadOnlyList<ParsedVertex> vertices, ushort[] boneTable, ParsedModel model)
     {
         var weightsByBone = new Dictionary<int, List<VertexWeight>>();
-        for (var i = 0; i < source.Vertices.Length; i++)
+        for (var i = 0; i < vertices.Count; i++)
         {
             var bound = false;
-            foreach (var (joint, weight) in VertexInfluences(source.Vertices[i], boneTable, model.BoneNames.Count))
+            foreach (var (joint, weight) in VertexInfluences(vertices[i], boneTable, model.BoneNames.Count))
             {
                 Weights(joint).Add(new VertexWeight { MVertexId = (uint)i, MWeight = weight });
                 bound = true;
