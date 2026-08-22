@@ -9,10 +9,10 @@ namespace Moonlace.GameData.Parsing;
 /// Struct layouts follow Lumina's MIT-licensed MdlStructs documentation of the
 /// format. Lumina's own MdlFile cannot read version 6 (Dawntrail) models —
 /// v6 changed the bone table encoding — which is why this parser exists.
-/// Everything v1 rendering needs (vertex declarations, strings, mesh/submesh
-/// tables, material names, LODs and the vertex/index buffers) is stored
-/// *before* the bone tables, so this parser simply stops reading there and is
-/// version-agnostic for the parts it consumes.
+/// The parser reads through the bone tables (the only structure where v5 and
+/// v6 diverge) and the submesh bone map; shapes and bounding boxes are not
+/// consumed. Submesh partitions and attribute masks are preserved so model
+/// rewrites keep per-part attribute visibility.
 /// </summary>
 public static class MdlParser
 {
@@ -103,9 +103,9 @@ public static class MdlParser
         int materialCount = r.ReadUInt16();
         int boneCount = r.ReadUInt16();
         int boneTableCount = r.ReadUInt16();
-        r.ReadUInt16(); // shape count
-        r.ReadUInt16(); // shape mesh count
-        r.ReadUInt16(); // shape value count
+        int shapeCount = r.ReadUInt16();
+        int shapeMeshCount = r.ReadUInt16();
+        int shapeValueCount = r.ReadUInt16();
         r.ReadByte(); // lod count
         r.ReadByte(); // flags1
         int elementIdCount = r.ReadUInt16();
@@ -148,8 +148,8 @@ public static class MdlParser
             r.ReadUInt16(); // padding
             m.IndexCount = r.ReadUInt32();
             m.MaterialIndex = r.ReadUInt16();
-            r.ReadUInt16(); // submesh index
-            r.ReadUInt16(); // submesh count
+            m.SubmeshIndex = r.ReadUInt16();
+            m.SubmeshCount = r.ReadUInt16();
             m.BoneTableIndex = r.ReadUInt16();
             m.StartIndex = r.ReadUInt32();
             m.VertexBufferOffsets = r.ReadUInt32Array(3);
@@ -160,10 +160,29 @@ public static class MdlParser
 
         var attributeNameOffsets = r.ReadUInt32Array(attributeCount);
         r.Skip(terrainShadowMeshCount * 20);
-        r.Skip(submeshCount * 16);
+
+        // Submeshes: index ranges within their mesh plus the attribute mask
+        // (bit i = attribute name i applies) and a slice of the submesh bone
+        // map. Index offsets are absolute in the index buffer here; they are
+        // rebased per mesh below.
+        var submeshes = new ParsedSubmesh[submeshCount];
+        for (var i = 0; i < submeshCount; i++)
+        {
+            submeshes[i] = new ParsedSubmesh(
+                IndexOffset: r.ReadUInt32(),
+                IndexCount: r.ReadUInt32(),
+                AttributeMask: r.ReadUInt32(),
+                BoneStartIndex: r.ReadUInt16(),
+                BoneCount: r.ReadUInt16());
+        }
+
         r.Skip(terrainShadowSubmeshCount * 10);
         var materialNameOffsets = r.ReadUInt32Array(materialCount);
         var boneNameOffsets = r.ReadUInt32Array(boneCount);
+
+        var attributeNames = new string[attributeCount];
+        for (var i = 0; i < attributeCount; i++)
+            attributeNames[i] = ReadCString(strings, (int)attributeNameOffsets[i]);
 
         var materialNames = new string[materialCount];
         for (var i = 0; i < materialCount; i++)
@@ -214,6 +233,12 @@ public static class MdlParser
             r.Position = afterHeaders + boneTableArrayCountTotal * 2;
         }
 
+        // --- Submesh bone map (after the shape blocks, preserved raw) ---
+        // Shape structs are 16B, shape meshes 12B, shape values 4B.
+        r.Skip(shapeCount * 16 + shapeMeshCount * 12 + shapeValueCount * 4);
+        var submeshBoneMapSize = (int)r.ReadUInt32();
+        var submeshBoneMapRaw = r.ReadBytes(submeshBoneMapSize).ToArray();
+
         // --- Decode geometry for LOD 0 ---
         var (lodMeshIndex, lodMeshCount) = lods[0];
         var parsedMeshes = new List<ParsedMesh>();
@@ -223,6 +248,18 @@ public static class MdlParser
             var decl = declarations[mi];
             var vertices = DecodeVertices(data, mesh, decl, vertexOffsets[0]);
             var indices = DecodeIndices(data, mesh, indexOffsets[0]);
+
+            // Rebase this mesh's submesh slice from absolute index-buffer
+            // offsets to offsets within the mesh's own index range.
+            var meshSubmeshes = new List<ParsedSubmesh>();
+            for (var si = mesh.SubmeshIndex; si < mesh.SubmeshIndex + mesh.SubmeshCount && si < submeshes.Length; si++)
+            {
+                var sub = submeshes[si];
+                var relative = sub.IndexOffset - mesh.StartIndex;
+                if (relative <= mesh.IndexCount && relative + sub.IndexCount <= mesh.IndexCount)
+                    meshSubmeshes.Add(sub with { IndexOffset = relative });
+            }
+
             parsedMeshes.Add(new ParsedMesh
             {
                 Vertices = vertices,
@@ -230,6 +267,7 @@ public static class MdlParser
                 MaterialIndex = mesh.MaterialIndex,
                 MaterialName = mesh.MaterialIndex < materialNames.Length ? materialNames[mesh.MaterialIndex] : "",
                 BoneTableIndex = mesh.BoneTableIndex,
+                Submeshes = meshSubmeshes,
             });
         }
 
@@ -237,6 +275,7 @@ public static class MdlParser
         {
             Meshes = parsedMeshes,
             MaterialNames = materialNames,
+            AttributeNames = attributeNames,
             BoneNames = boneNames,
             BoneTables = boneTables,
             EditData = new MdlEditData
@@ -249,6 +288,7 @@ public static class MdlParser
                 MaterialNameOffsets = materialNameOffsets,
                 BoneNameOffsets = boneNameOffsets,
                 ElementIdsRaw = elementIdsRaw,
+                SubmeshBoneMapRaw = submeshBoneMapRaw,
                 Lod0ModelRange = lodRanges[0].Model,
                 Lod0TextureRange = lodRanges[0].Texture,
             },
@@ -366,6 +406,8 @@ public static class MdlParser
         public ushort VertexCount;
         public uint IndexCount;
         public ushort MaterialIndex;
+        public ushort SubmeshIndex;
+        public ushort SubmeshCount;
         public ushort BoneTableIndex;
         public uint StartIndex;
         public uint[] VertexBufferOffsets = [];
@@ -381,6 +423,9 @@ public sealed class ParsedModel
 
     /// <summary>Material names as stored in the model (e.g. "/mt_w0201b0001_a.mtrl").</summary>
     public required IReadOnlyList<string> MaterialNames { get; init; }
+
+    /// <summary>Attribute names (e.g. "atr_tv_a"); submesh attribute masks index this list by bit.</summary>
+    public IReadOnlyList<string> AttributeNames { get; init; } = [];
 
     /// <summary>All bone names referenced by the model, in bone-list order.</summary>
     public IReadOnlyList<string> BoneNames { get; init; } = [];
@@ -411,6 +456,9 @@ public sealed class MdlEditData
 
     public required byte[] ElementIdsRaw { get; init; }
 
+    /// <summary>The submesh bone map, preserved verbatim (submesh BoneStartIndex/BoneCount slice into it).</summary>
+    public byte[] SubmeshBoneMapRaw { get; init; } = [];
+
     public required float Lod0ModelRange { get; init; }
 
     public required float Lod0TextureRange { get; init; }
@@ -427,7 +475,26 @@ public sealed class ParsedMesh
     public int MaterialIndex { get; init; }
 
     public int BoneTableIndex { get; init; }
+
+    /// <summary>
+    /// Submesh partition of this mesh's index range, in index order. Empty
+    /// for geometry without known partitioning (the writer then emits one
+    /// covering submesh with no attributes).
+    /// </summary>
+    public IReadOnlyList<ParsedSubmesh> Submeshes { get; init; } = [];
 }
+
+/// <summary>
+/// One submesh: an index range within its mesh (<paramref name="IndexOffset"/>
+/// is relative to the mesh's own index start), the attribute mask (bit i =
+/// model attribute name i applies), and its slice of the submesh bone map.
+/// </summary>
+public readonly record struct ParsedSubmesh(
+    uint IndexOffset,
+    uint IndexCount,
+    uint AttributeMask,
+    ushort BoneStartIndex,
+    ushort BoneCount);
 
 public struct ParsedVertex
 {
