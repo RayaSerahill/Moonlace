@@ -291,6 +291,25 @@ public sealed class DawntrailUpgradeTests : IDisposable
         return result;
     }
 
+    /// <summary>A minimal TexTools .meta blob holding a single GMP chunk (visor enabled).</summary>
+    private static byte[] MetaBlobWithGmp(string targetPath)
+    {
+        using var stream = new MemoryStream();
+        using var writer = new BinaryWriter(stream);
+        writer.Write(2u); // metadata version
+        writer.Write(System.Text.Encoding.UTF8.GetBytes(targetPath));
+        writer.Write((byte)0);
+        writer.Write(1u);  // one chunk
+        writer.Write(12u); // per-chunk header size
+        var headerStart = (uint)stream.Position + 4;
+        writer.Write(headerStart);
+        writer.Write(5u); // chunk type Gmp
+        writer.Write(headerStart + 12); // chunk offset
+        writer.Write(5u); // chunk size
+        writer.Write([0x01, 0x00, 0x00, 0x00, 0x00]); // enabled, no rotation
+        return stream.ToArray();
+    }
+
     [Fact]
     public async Task TtmpModpackConvertsAndUpgradesIntoAPmp()
     {
@@ -305,6 +324,7 @@ public sealed class DawntrailUpgradeTests : IDisposable
         {
             10, 20, 30, 255, 11, 21, 31, 255, 12, 22, 32, 255, 13, 23, 33, 255,
         }));
+        var metaBlob = SqPackType2(MetaBlobWithGmp("chara/equipment/e9999/e9999_met.meta"));
 
         var mpd = new MemoryStream();
         long mtrlOffset = mpd.Position;
@@ -313,6 +333,8 @@ public sealed class DawntrailUpgradeTests : IDisposable
         mpd.Write(normalBlob);
         long maskOffset = mpd.Position;
         mpd.Write(maskBlob);
+        long metaOffset = mpd.Position;
+        mpd.Write(metaBlob);
 
         var manifest = new
         {
@@ -325,7 +347,7 @@ public sealed class DawntrailUpgradeTests : IDisposable
                 new { Name = "Material", FullPath = MtrlGamePath, ModOffset = mtrlOffset, ModSize = mtrlBlob.Length },
                 new { Name = "Normal", FullPath = NormalGamePath, ModOffset = normalOffset, ModSize = normalBlob.Length },
                 new { Name = "Mask", FullPath = MaskGamePath, ModOffset = maskOffset, ModSize = maskBlob.Length },
-                new { Name = "Meta", FullPath = "chara/equipment/e9999/e9999.meta", ModOffset = 0L, ModSize = 0L },
+                new { Name = "Meta", FullPath = "chara/equipment/e9999/e9999_met.meta", ModOffset = metaOffset, ModSize = metaBlob.Length },
             },
         };
 
@@ -346,7 +368,7 @@ public sealed class DawntrailUpgradeTests : IDisposable
         Assert.Equal(1, report.MaterialsUpgraded);
         Assert.Equal(1, report.IndexTexturesCreated);
         Assert.Equal(1, report.MasksConverted);
-        Assert.Contains(report.Warnings, w => w.Contains(".meta"));
+        Assert.DoesNotContain(report.Warnings, w => w.Contains(".meta"));
 
         using var pmp = System.IO.Compression.ZipFile.OpenRead(outputPmp);
         Assert.NotNull(pmp.GetEntry("meta.json"));
@@ -354,10 +376,17 @@ public sealed class DawntrailUpgradeTests : IDisposable
         // The default file redirections carry the game paths, including the new index texture.
         using var defaultModStream = new MemoryStream();
         pmp.GetEntry("default_mod.json")!.Open().CopyTo(defaultModStream);
-        var files = JsonDocument.Parse(defaultModStream.ToArray()).RootElement.GetProperty("Files");
+        var defaultMod = JsonDocument.Parse(defaultModStream.ToArray()).RootElement;
+        var files = defaultMod.GetProperty("Files");
         Assert.True(files.TryGetProperty(MtrlGamePath, out _));
         Assert.True(files.TryGetProperty(NormalGamePath.Replace("_n.tex", "_id.tex"), out _));
-        Assert.False(files.TryGetProperty("chara/equipment/e9999/e9999.meta", out _));
+        Assert.False(files.TryGetProperty("chara/equipment/e9999/e9999_met.meta", out _));
+
+        // The .meta blob rides along as a Penumbra manipulation instead.
+        var manipulation = defaultMod.GetProperty("Manipulations").EnumerateArray().Single();
+        Assert.Equal("Gmp", manipulation.GetProperty("Type").GetString());
+        Assert.Equal(9999, manipulation.GetProperty("Manipulation").GetProperty("SetId").GetInt32());
+        Assert.True(manipulation.GetProperty("Manipulation").GetProperty("Entry").GetProperty("Enabled").GetBoolean());
 
         // The extracted-and-upgraded material is characterlegacy.
         var mtrlEntry = pmp.Entries.Single(e => e.FullName.EndsWith(".mtrl", StringComparison.Ordinal));
