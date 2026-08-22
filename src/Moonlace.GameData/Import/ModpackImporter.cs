@@ -203,8 +203,8 @@ public sealed class ModpackImporter
 
         if (count > 0)
             report.Warnings.Add(
-                $"{count} metadata manipulation{(count == 1 ? " was" : "s were")} not imported (IMC/EQP/EST…) — " +
-                "Moonlace edits files only; install the original mod with Penumbra if those matter.");
+                $"{count} metadata manipulation{(count == 1 ? " was" : "s were")} not imported (IMC/EQP/EST and friends). " +
+                "Session edits cover files only; install the modpack itself with Penumbra to get its metadata effects.");
     }
 
     private static int CountManipulations(JsonNode? node) => node switch
