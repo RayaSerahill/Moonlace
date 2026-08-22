@@ -14,6 +14,8 @@ namespace Moonlace.GameData.Interchange;
 /// the template, material slots are mapped by material name, skin weights
 /// are remapped through bone names onto the template's bone list, and
 /// per-mesh bone tables are extended as needed (up to the format's 64).
+/// Part-named meshes ("mesh_2.1") are regrouped into their FFXIV mesh with
+/// the submesh partition — and the template's attribute masks — restored.
 ///
 /// FBX specifics: assimp triangulates and merges duplicate corners, node
 /// transforms are baked into the geometry, coordinates are converted from
@@ -68,20 +70,74 @@ public static class FbxImporter
         if (boneTables.Count == 0)
             boneTables.Add([]);
 
-        var meshes = new List<ParsedMesh>();
-        for (var mi = 0; mi < triangleMeshes.Count; mi++)
+        // Group meshes into FFXIV meshes: part-named meshes ("mesh_2.1",
+        // written by the exporter per submesh) regroup by mesh number so the
+        // partition and its attributes survive; other names import whole.
+        var groups = new List<(int? TemplateMeshIndex, List<(nint Mesh, Matrix4x4 Transform, int PartNumber)> Parts)>();
+        var groupByMeshNumber = new Dictionary<int, int>();
+        foreach (var (meshPointer, transform) in triangleMeshes)
         {
-            var (meshPointer, transform) = triangleMeshes[mi];
-            var mesh = (AiMesh*)meshPointer;
-            var materialName = MaterialName(scene, mesh->MMaterialIndex);
-            var label = materialName ?? (mesh->MName.Length > 0 ? ReadString(mesh->MName) : $"mesh {mi}");
+            var name = ReadString(((AiMesh*)meshPointer)->MName);
+            if (ModelImportShared.TryParsePartName(name, out var meshNumber, out var partNumber))
+            {
+                if (!groupByMeshNumber.TryGetValue(meshNumber, out var g))
+                {
+                    groupByMeshNumber[meshNumber] = g = groups.Count;
+                    groups.Add((meshNumber, []));
+                }
+
+                groups[g].Parts.Add((meshPointer, transform, partNumber));
+            }
+            else
+            {
+                groups.Add((null, [(meshPointer, transform, -1)]));
+            }
+        }
+
+        var meshes = new List<ParsedMesh>();
+        for (var gi = 0; gi < groups.Count; gi++)
+        {
+            var (templateMeshIndex, parts) = groups[gi];
+            var firstMesh = (AiMesh*)parts[0].Mesh;
+            var groupMaterialName = MaterialName(scene, firstMesh->MMaterialIndex);
+            var groupLabel = groupMaterialName
+                ?? (firstMesh->MName.Length > 0 ? ReadString(firstMesh->MName) : $"mesh {gi}");
 
             var materialIndex = ModelImportShared.ResolveMaterialIndex(
-                materialName, mi, triangleMeshes.Count, template, label);
-            var templateMesh = mi < template.Meshes.Count ? template.Meshes[mi] : template.Meshes[0];
+                groupMaterialName, gi, groups.Count, template, groupLabel);
+            var templateMesh = templateMeshIndex is { } tmi && tmi < template.Meshes.Count
+                ? template.Meshes[tmi]
+                : gi < template.Meshes.Count ? template.Meshes[gi] : template.Meshes[0];
             var boneTableIndex = Math.Min(templateMesh.BoneTableIndex, boneTables.Count - 1);
             var table = boneTables[boneTableIndex];
 
+            var importedParts = new List<ModelImportShared.ImportedPart>();
+            foreach (var (meshPointer, transform, partNumber) in parts)
+            {
+                var mesh = (AiMesh*)meshPointer;
+                var materialName = MaterialName(scene, mesh->MMaterialIndex);
+                var label = materialName ?? (mesh->MName.Length > 0 ? ReadString(mesh->MName) : groupLabel);
+                if (materialName is not null
+                    && ModelImportShared.ResolveMaterialIndex(materialName, gi, groups.Count, template, label) != materialIndex)
+                    throw new ModelImportException(
+                        $"The parts of \"{groupLabel}\" use different materials; an FFXIV mesh has exactly one. " +
+                        "Give all parts of a mesh the same material.");
+
+                var (vertices, indices) = ImportMesh(mesh, transform, table, label);
+                importedParts.Add(new ModelImportShared.ImportedPart(vertices, indices, partNumber, label));
+            }
+
+            meshes.Add(ModelImportShared.MergeParts(
+                importedParts,
+                templateMeshIndex is not null ? templateMesh : null,
+                materialIndex, template.MaterialNames[materialIndex], boneTableIndex));
+        }
+
+        return new ModelImportResult(meshes, boneTables.Select(t => t.ToArray()).ToArray());
+
+        (ParsedVertex[] Vertices, uint[] Indices) ImportMesh(
+            AiMesh* mesh, Matrix4x4 transform, List<ushort> table, string label)
+        {
             var count = (int)mesh->MNumVertices;
             if (count == 0)
                 throw new ModelImportException($"\"{label}\" has no vertices.");
@@ -132,17 +188,8 @@ public static class FbxImporter
                 }
             }
 
-            meshes.Add(new ParsedMesh
-            {
-                Vertices = vertices,
-                Indices = indices,
-                MaterialIndex = materialIndex,
-                MaterialName = template.MaterialNames[materialIndex],
-                BoneTableIndex = boneTableIndex,
-            });
+            return (vertices, indices);
         }
-
-        return new ModelImportResult(meshes, boneTables.Select(t => t.ToArray()).ToArray());
     }
 
     /// <summary>Per-vertex bone influences (template bone index + weight) from the mesh's per-bone weight lists.</summary>
