@@ -3,6 +3,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using Lumina.Data;
 using Lumina.Data.Structs;
+using Moonlace.GameData.Meta;
 
 namespace Moonlace.GameData.Upgrade;
 
@@ -14,7 +15,8 @@ public sealed class ModpackException(string message) : Exception(message);
 /// files (TTMPL.mpl manifest + TTMPD.mpd, whose entries are
 /// SqPack-compressed blobs that Lumina's SqPackStream decompresses). Both
 /// extract into a plain Penumbra mod folder the upgrader can work on, which
-/// is then repackaged as a .pmp.
+/// is then repackaged as a .pmp. TexTools .meta/.rgsp metadata blobs are
+/// translated into Penumbra manipulations on the way.
 /// </summary>
 public static class ModpackFile
 {
@@ -182,23 +184,45 @@ public static class ModpackFile
             using var mpdStream = File.OpenRead(mpdPath);
             using var sqpack = new SqPackStream(mpdStream, PlatformId.Win32);
             var writtenByOffset = new Dictionary<long, string>();
-            var metaSkipped = 0;
+            var manipulationsByOffset = new Dictionary<long, List<MetaManipulation>>();
 
-            Dictionary<string, string> WriteEntries(IEnumerable<TtmpEntry> entries, string prefix)
+            (Dictionary<string, string> Files, JsonArray Manipulations) WriteEntries(IEnumerable<TtmpEntry> entries, string prefix)
             {
                 var files = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                var manipulations = new JsonArray();
+                var seenTargets = new HashSet<string>(StringComparer.Ordinal);
                 foreach (var entry in entries)
                 {
                     var gamePath = entry.FullPath?.Trim().Replace('\\', '/');
                     if (string.IsNullOrEmpty(gamePath))
                         continue;
-                    if (gamePath.EndsWith(".meta", StringComparison.OrdinalIgnoreCase)
-                        || gamePath.EndsWith(".rgsp", StringComparison.OrdinalIgnoreCase))
+                    if (TexToolsMetaParser.IsMetadataPath(gamePath))
                     {
-                        // Metadata blobs (IMC/EQDP/EST…); Penumbra
-                        // represents these as manipulations, which Moonlace
-                        // does not translate.
-                        metaSkipped++;
+                        // Metadata blobs (IMC/EQDP/EST…) become Penumbra
+                        // manipulations instead of file redirections.
+                        if (!manipulationsByOffset.TryGetValue(entry.ModOffset, out var parsed))
+                        {
+                            parsed = [];
+                            try
+                            {
+                                var blob = sqpack.ReadFile<FileResource>(entry.ModOffset).Data;
+                                parsed = TexToolsMetaParser.Parse(gamePath, blob, warnings);
+                            }
+                            catch (Exception ex)
+                            {
+                                warnings.Add($"Could not translate {gamePath} into Penumbra manipulations: {ex.Message}");
+                            }
+
+                            manipulationsByOffset[entry.ModOffset] = parsed;
+                        }
+
+                        // Penumbra keeps one manipulation per target per option; the first one wins.
+                        foreach (var manipulation in parsed)
+                        {
+                            if (seenTargets.Add(manipulation.IdentityKey))
+                                manipulations.Add(manipulation.ToJson());
+                        }
+
                         continue;
                     }
 
@@ -225,17 +249,17 @@ public static class ModpackFile
                     files[gamePath] = rel;
                 }
 
-                return files;
+                return (files, manipulations);
             }
 
-            var defaultFiles = WriteEntries(manifest.SimpleModsList ?? [], "");
+            var (defaultFiles, defaultManipulations) = WriteEntries(manifest.SimpleModsList ?? [], "");
             WriteJson(Path.Combine(targetDir, "default_mod.json"), new JsonObject
             {
                 ["Name"] = "",
                 ["Priority"] = 0,
                 ["Files"] = ToFilesNode(defaultFiles),
                 ["FileSwaps"] = new JsonObject(),
-                ["Manipulations"] = new JsonArray(),
+                ["Manipulations"] = defaultManipulations,
             });
 
             var groupIndex = 0;
@@ -252,7 +276,7 @@ public static class ModpackFile
                 {
                     var option = options[i];
                     var optionName = string.IsNullOrWhiteSpace(option.Name) ? $"Option {i + 1}" : option.Name!;
-                    var files = WriteEntries(option.ModsJsons ?? [],
+                    var (files, manipulations) = WriteEntries(option.ModsJsons ?? [],
                         $"{SafeSegment(groupName)}/{SafeSegment(optionName)}");
                     if (option.IsChecked)
                         defaultSettings = isMulti ? defaultSettings | (1L << i) : i;
@@ -263,7 +287,7 @@ public static class ModpackFile
                         ["Description"] = "",
                         ["Files"] = ToFilesNode(files),
                         ["FileSwaps"] = new JsonObject(),
-                        ["Manipulations"] = new JsonArray(),
+                        ["Manipulations"] = manipulations,
                     });
                 }
 
@@ -289,11 +313,6 @@ public static class ModpackFile
                 ["Version"] = string.IsNullOrWhiteSpace(manifest.Version) ? "1.0.0" : manifest.Version,
                 ["Website"] = "",
             });
-
-            if (metaSkipped > 0)
-                warnings.Add($"{metaSkipped} metadata entr{(metaSkipped == 1 ? "y was" : "ies were")} " +
-                    "skipped (.meta/.rgsp) — IMC/EQDP-style edits are not carried into the PMP; " +
-                    "import the original with Penumbra if those matter.");
         }
         finally
         {
