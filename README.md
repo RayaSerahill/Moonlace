@@ -233,8 +233,6 @@ During conversion, Moonlace can update:
 
 It also works as a straightforward TTMP to PMP converter when the source pack already uses current formats.
 
-One limitation: `.meta` and `.rgsp` metadata entries are not carried over. If a mod depends on them, import the original mod alongside the converted version.
-
 ## Data locations
 
 | What              | Linux                                     | Windows                                   |
@@ -271,4 +269,4 @@ Moonlace does not modify your FFXIV installation.
 
 Game assets are treated as source material only. Your experiments stay in Moonlace sessions or inside Penumbra mods you deliberately chose to edit.
 
-Break the model, make the texture radioactive pink, give a Lalafell a deeply questionable material setup, then discard the session and carry on. The game files remain blissfully unaware.
+Break the model, make the texture radioactive pink, give a miqote a deeply questionable material setup, then discard the session and carry on. The game files remain blissfully unaware.
