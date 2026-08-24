@@ -13,8 +13,8 @@ namespace Moonlace.GameData.Interchange;
 /// Mesh names follow the TexTools/Penumbra convention: only the trailing
 /// numbers matter ("chest 0.0", "foot 0.6", "mesh_2.1" are all mesh N part
 /// M; a bare trailing number is part 0), so such meshes are regrouped into
-/// their FFXIV mesh with the submesh partition — and the template's
-/// attribute masks — restored.
+/// their FFXIV mesh with the submesh partition and the template's
+/// attribute masks restored.
 /// </summary>
 public static class GltfImporter
 {
@@ -59,12 +59,21 @@ public static class GltfImporter
             skinMaps[skin] = map;
         }
 
-        // Node lookup: which skin is used to render each mesh.
+        // Node lookup: which skin is used to render each mesh, and the node's
+        // own name. Renaming in Blender's outliner renames the object (the
+        // node), not the mesh datablock, so the node name is what users
+        // actually type; it takes priority over the mesh name (TexTools reads
+        // node names too).
         var skinByMesh = new Dictionary<Mesh, Skin>();
+        var nodeNameByMesh = new Dictionary<Mesh, string>();
         foreach (var node in gltf.LogicalNodes)
         {
-            if (node.Mesh is not null && node.Skin is not null)
+            if (node.Mesh is null)
+                continue;
+            if (node.Skin is not null)
                 skinByMesh[node.Mesh] = node.Skin;
+            if (!string.IsNullOrEmpty(node.Name))
+                nodeNameByMesh.TryAdd(node.Mesh, node.Name);
         }
 
         var boneTables = template.BoneTables.Select(t => t.ToList()).ToList();
@@ -78,7 +87,8 @@ public static class GltfImporter
         var groupByMeshNumber = new Dictionary<int, int>();
         foreach (var (mesh, primitive) in primitives)
         {
-            if (ModelImportShared.TryParsePartName(mesh.Name, out var meshNumber, out var partNumber))
+            if (ModelImportShared.TryParsePartName(nodeNameByMesh.GetValueOrDefault(mesh), out var meshNumber, out var partNumber)
+                || ModelImportShared.TryParsePartName(mesh.Name, out meshNumber, out partNumber))
             {
                 if (!groupByMeshNumber.TryGetValue(meshNumber, out var g))
                 {
