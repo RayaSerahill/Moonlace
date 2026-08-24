@@ -117,6 +117,40 @@ public sealed class MeshNameConventionTests : IDisposable
     }
 
     [Fact]
+    public void NodeNamesWinOverMeshNames()
+    {
+        var model = new ParsedModel
+        {
+            Meshes = [BuildMesh(1, 2, "/mt_c0101e0001_top_a.mtrl")],
+            MaterialNames = ["/mt_c0101e0001_top_a.mtrl"],
+            BoneNames = ["j_kosi"],
+            BoneTables = [[0]],
+        };
+
+        var glb = Path.Combine(_tempDir, "nodenames.glb");
+        GltfExporter.Export(model, [new ModelMaterialInfo { Name = model.MaterialNames[0] }], glb);
+
+        // Blender's outliner renames the object (the node); the mesh
+        // datablock keeps whatever it was called. Simulate exactly that.
+        var gltf = SharpGLTF.Schema2.ModelRoot.Load(glb);
+        var part = 0;
+        foreach (var mesh in gltf.LogicalMeshes.Where(m => m.Name is "mesh_0.0" or "mesh_0.1").ToArray())
+        {
+            var partNumber = mesh.Name == "mesh_0.0" ? 0 : 1;
+            foreach (var node in gltf.LogicalNodes.Where(n => n.Mesh == mesh))
+                node.Name = $"cool chest 0.{partNumber}";
+            mesh.Name = $"Cube.00{++part}";
+        }
+
+        var renamed = Path.Combine(_tempDir, "nodenames2.glb");
+        gltf.SaveGLB(renamed);
+
+        var import = GltfImporter.Import(renamed, model);
+        var merged = Assert.Single(import.Meshes);
+        Assert.Equal(model.Meshes[0].Submeshes, merged.Submeshes);
+    }
+
+    [Fact]
     public void MeshNumberPicksTemplateMeshAndItsMaterial()
     {
         // Template with two meshes on different materials; the import brings
