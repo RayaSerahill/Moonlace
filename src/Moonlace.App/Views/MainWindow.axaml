@@ -53,6 +53,8 @@
                         <MenuItem Header="Mod tools" FontSize="13">
                             <MenuItem Header="Retarget mod…"
                                       Command="{Binding ModTools.OpenRetargetCommand}" />
+                            <MenuItem Header="Retarget animation…"
+                                      Command="{Binding AnimationTools.OpenRetargetCommand}" />
                         </MenuItem>
                         <MenuItem Header="Penumbra" FontSize="13">
                             <MenuItem Header="Live edit…"
@@ -87,6 +89,9 @@
                         <TextBlock FontSize="12" Foreground="#E89B9B" VerticalAlignment="Center"
                                    Text="{Binding ModTools.ErrorText}" TextTrimming="CharacterEllipsis" MaxWidth="420"
                                    IsVisible="{Binding ModTools.ErrorText, Converter={x:Static ObjectConverters.IsNotNull}}" />
+                        <TextBlock FontSize="12" Foreground="#E89B9B" VerticalAlignment="Center"
+                                   Text="{Binding AnimationTools.ErrorText}" TextTrimming="CharacterEllipsis" MaxWidth="420"
+                                   IsVisible="{Binding AnimationTools.ErrorText, Converter={x:Static ObjectConverters.IsNotNull}}" />
                         <TextBlock FontSize="12" Foreground="#E89B9B" VerticalAlignment="Center"
                                    Text="{Binding Sessions.ErrorText}" TextTrimming="CharacterEllipsis" MaxWidth="420"
                                    IsVisible="{Binding Sessions.ErrorText, Converter={x:Static ObjectConverters.IsNotNull}}" />
@@ -378,6 +383,102 @@
                         </DockPanel>
                     </Grid>
                 </DockPanel>
+            </Border>
+        </Border>
+
+        <!-- Mod tools: retarget animation -->
+        <Border Background="#C0141216" IsVisible="{Binding AnimationTools.IsRetargetPanelOpen}">
+            <Border VerticalAlignment="Center" HorizontalAlignment="Center"
+                    Background="{StaticResource MoonPanelBrush}"
+                    BorderBrush="{StaticResource MoonBorderBrush}" BorderThickness="1"
+                    CornerRadius="12" Padding="24,20" Width="780" MaxHeight="680">
+                <DockPanel>
+                    <TextBlock DockPanel.Dock="Top" Classes="title" FontSize="16" Text="Retarget animation" />
+                    <TextBlock DockPanel.Dock="Top" Classes="dim" FontSize="12" Margin="0,2,0,0"
+                               Text="{Binding AnimationTools.ModName}" TextTrimming="CharacterEllipsis" />
+                    <TextBlock DockPanel.Dock="Top" Classes="dim" FontSize="12" TextWrapping="Wrap" Margin="0,6,0,10"
+                               Text="Give each modded animation a new emote or animation on the right; ones left unchanged are carried as they are. A new .pmp is saved, the selected modpack itself is not touched." />
+
+                    <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" Spacing="8"
+                                HorizontalAlignment="Right" Margin="0,14,0,0">
+                        <Button Content="Close" Command="{Binding AnimationTools.CloseRetargetPanelCommand}" />
+                        <Button Classes="primary" Content="Save retargeted .pmp…"
+                                Command="{Binding AnimationTools.SaveRetargetedCommand}" />
+                    </StackPanel>
+
+                    <TextBlock DockPanel.Dock="Bottom" FontSize="12" Foreground="#E89B9B" TextWrapping="Wrap"
+                               Margin="0,8,0,0" Text="{Binding AnimationTools.ErrorText}"
+                               IsVisible="{Binding AnimationTools.ErrorText, Converter={x:Static ObjectConverters.IsNotNull}}" />
+                    <ScrollViewer DockPanel.Dock="Bottom" MaxHeight="80" Margin="0,8,0,0"
+                                  IsVisible="{Binding AnimationTools.WarningsText, Converter={x:Static ObjectConverters.IsNotNull}}">
+                        <TextBlock FontSize="11" Foreground="#E8C89B" TextWrapping="Wrap"
+                                   Text="{Binding AnimationTools.WarningsText}" />
+                    </ScrollViewer>
+                    <TextBlock DockPanel.Dock="Bottom" FontSize="12" TextWrapping="Wrap" Margin="0,8,0,0"
+                               Text="{Binding AnimationTools.ResultText}"
+                               IsVisible="{Binding AnimationTools.ResultText, Converter={x:Static ObjectConverters.IsNotNull}}" />
+
+                    <TextBlock Classes="dim" FontSize="12" TextWrapping="Wrap"
+                               Text="This mod contains no animation files matching a known emote or animation timeline."
+                               IsVisible="{Binding !AnimationTools.HasBindings}" />
+
+                    <Grid ColumnDefinitions="330,16,*" IsVisible="{Binding AnimationTools.HasBindings}">
+                        <!-- Left: every animation the mod affects, with its assigned target -->
+                        <DockPanel Grid.Column="0">
+                            <TextBlock DockPanel.Dock="Top" Text="Affected animations" FontWeight="SemiBold"
+                                       FontSize="13" Margin="0,0,0,6" />
+                            <ListBox FontSize="12" MaxHeight="360"
+                                     ItemsSource="{Binding AnimationTools.Assignments}"
+                                     SelectedItem="{Binding AnimationTools.SelectedAssignment}">
+                                <ListBox.ItemTemplate>
+                                    <DataTemplate x:DataType="vm:AnimationAssignmentViewModel">
+                                        <StackPanel Spacing="2">
+                                            <TextBlock Text="{Binding BindingLabel}" FontSize="12"
+                                                       TextTrimming="CharacterEllipsis" />
+                                            <TextBlock Text="{Binding TargetLabel}" FontSize="11"
+                                                       Foreground="{StaticResource MoonAccentDimBrush}"
+                                                       TextTrimming="CharacterEllipsis" />
+                                        </StackPanel>
+                                    </DataTemplate>
+                                </ListBox.ItemTemplate>
+                            </ListBox>
+                        </DockPanel>
+
+                        <!-- Right: the selected animation's new target -->
+                        <DockPanel Grid.Column="2">
+                            <TextBlock DockPanel.Dock="Top" Text="New emote or animation for the selection"
+                                       FontWeight="SemiBold" FontSize="13" Margin="0,0,0,6" />
+                            <StackPanel Spacing="6">
+                                <TextBox Watermark="Search emotes (a search with / also matches raw timeline keys)"
+                                         FontSize="12"
+                                         Text="{Binding AnimationTools.DestinationSearch}" />
+                                <ListBox MaxHeight="260" FontSize="12"
+                                         ItemsSource="{Binding AnimationTools.DestinationChoices}"
+                                         SelectedItem="{Binding AnimationTools.SelectedDestination}">
+                                    <ListBox.ItemTemplate>
+                                        <DataTemplate x:DataType="modtools:AnimationTimeline">
+                                            <TextBlock Text="{Binding Label}" FontSize="12"
+                                                       TextTrimming="CharacterEllipsis" />
+                                        </DataTemplate>
+                                    </ListBox.ItemTemplate>
+                                </ListBox>
+                                <Button Content="Leave unchanged" FontSize="12" HorizontalAlignment="Right"
+                                        Command="{Binding AnimationTools.ClearAssignmentCommand}" />
+                            </StackPanel>
+                        </DockPanel>
+                    </Grid>
+                </DockPanel>
+            </Border>
+        </Border>
+
+        <!-- Mod tools: retarget animation busy -->
+        <Border Background="#C0141216" IsVisible="{Binding AnimationTools.IsBusy}">
+            <Border VerticalAlignment="Center" HorizontalAlignment="Center"
+                    Background="{StaticResource MoonPanelBrush}" CornerRadius="999" Padding="20,10">
+                <StackPanel Orientation="Horizontal" Spacing="10">
+                    <ProgressBar IsIndeterminate="True" Width="120" Height="4" />
+                    <TextBlock Classes="dim" Text="{Binding AnimationTools.BusyText}" FontSize="12" />
+                </StackPanel>
             </Border>
         </Border>
 
