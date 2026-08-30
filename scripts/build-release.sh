@@ -43,8 +43,8 @@ mkdir -p "$RELEASES"
 
 for RID in "${RIDS[@]}"; do
     case "$RID" in
-        win-*)   VPK_OS=win;   CHANNEL=win;   MAIN_EXE=Moonlace.exe ;;
-        linux-*) VPK_OS=linux; CHANNEL=linux; MAIN_EXE=Moonlace ;;
+        win-*)   VPK_OS=win;   CHANNEL=win;   MAIN_EXE=Moonlace.exe; ICON=media/logo.ico ;;
+        linux-*) VPK_OS=linux; CHANNEL=linux; MAIN_EXE=Moonlace;     ICON=media/logo.png ;;
         *) echo "Unsupported runtime: $RID" >&2; exit 1 ;;
     esac
 
@@ -69,6 +69,7 @@ for RID in "${RIDS[@]}"; do
         --packVersion "$VERSION" \
         --packDir "$OUT" \
         --mainExe "$MAIN_EXE" \
+        --icon "$ICON" \
         --packTitle Moonlace \
         --packAuthors "Raya Serahill" \
         -c "$CHANNEL" \

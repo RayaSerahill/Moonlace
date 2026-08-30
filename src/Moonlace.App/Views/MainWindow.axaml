@@ -6,6 +6,7 @@
         x:Class="Moonlace.App.Views.MainWindow"
         x:DataType="vm:MainWindowViewModel"
         Title="Moonlace"
+        Icon="/Assets/logo.png"
         Width="1200" Height="760"
         MinWidth="820" MinHeight="520"
         Background="{StaticResource MoonBackgroundBrush}">
