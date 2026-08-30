@@ -7,7 +7,8 @@
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <!-- The executable consumers see. -->
     <AssemblyName>Moonlace</AssemblyName>
-    <Version>2.4.0</Version>
+    <Version>2.4.1</Version>
+    <ApplicationIcon>..\..\media\logo.ico</ApplicationIcon>
     <Product>Moonlace</Product>
     <Description>A Linux-first desktop workbench for FFXIV models and Penumbra mods.</Description>
   </PropertyGroup>
@@ -15,6 +16,7 @@
   <ItemGroup>
     <Folder Include="Models\" />
     <AvaloniaResource Include="Assets\**" />
+    <AvaloniaResource Include="..\..\media\logo.png" Link="Assets\logo.png" />
   </ItemGroup>
 
   <ItemGroup>
