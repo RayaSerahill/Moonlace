@@ -8,7 +8,14 @@
 
     <Grid RowDefinitions="*,Auto">
 
-        <Grid Grid.Row="0" ColumnDefinitions="290,1,430,1,*">
+        <Grid Grid.Row="0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="290" MinWidth="200" />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="430" MinWidth="300" />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" MinWidth="240" />
+            </Grid.ColumnDefinitions>
 
             <!-- ═══ Column 1: item browser ═══ -->
             <Grid Grid.Column="0" RowDefinitions="Auto,*" Margin="12,12,6,6">
@@ -64,7 +71,18 @@
                 </Border>
             </Grid>
 
-            <Rectangle Grid.Column="1" Fill="{StaticResource MoonBorderBrush}" Margin="0,16" />
+            <!-- Draggable divider: transparent grab strip with a 1px line drawn inside -->
+            <GridSplitter Grid.Column="1" Width="7" Background="Transparent"
+                          ResizeDirection="Columns">
+                <GridSplitter.Template>
+                    <ControlTemplate>
+                        <Border Background="Transparent">
+                            <Rectangle Width="1" HorizontalAlignment="Center"
+                                       Fill="{StaticResource MoonBorderBrush}" Margin="0,16" />
+                        </Border>
+                    </ControlTemplate>
+                </GridSplitter.Template>
+            </GridSplitter>
 
             <!-- ═══ Column 2: editing tabs, full height ═══ -->
             <Border Grid.Column="2" Margin="6,12,6,6"
@@ -357,7 +375,17 @@
                 </Panel>
             </Border>
 
-            <Rectangle Grid.Column="3" Fill="{StaticResource MoonBorderBrush}" Margin="0,16" />
+            <GridSplitter Grid.Column="3" Width="7" Background="Transparent"
+                          ResizeDirection="Columns">
+                <GridSplitter.Template>
+                    <ControlTemplate>
+                        <Border Background="Transparent">
+                            <Rectangle Width="1" HorizontalAlignment="Center"
+                                       Fill="{StaticResource MoonBorderBrush}" Margin="0,16" />
+                        </Border>
+                    </ControlTemplate>
+                </GridSplitter.Template>
+            </GridSplitter>
 
             <!-- ═══ Column 3: 3D viewport, always visible ═══ -->
             <Border Grid.Column="4" Margin="6,12,12,6"
