@@ -24,11 +24,14 @@ public sealed class ModelImportException(string message, Exception? inner = null
 internal static class ModelImportShared
 {
     /// <summary>
-    /// Maps an incoming mesh onto a template material slot by material name,
-    /// falling back to mesh order only when that is unambiguous.
+    /// Maps an incoming mesh onto a template material slot by material name.
+    /// Without a name match, a mesh whose name carried an FFXIV mesh number
+    /// keeps that template mesh's material; otherwise mesh order is used when
+    /// unambiguous.
     /// </summary>
     public static int ResolveMaterialIndex(
-        string? materialName, int meshIndex, int meshCount, ParsedModel template, string label)
+        string? materialName, int meshIndex, int meshCount, ParsedModel template, string label,
+        int? templateMaterialIndex = null)
     {
         if (!string.IsNullOrEmpty(materialName))
         {
@@ -38,6 +41,9 @@ internal static class ModelImportShared
                     return i;
             }
         }
+
+        if (templateMaterialIndex is { } tmi && tmi >= 0 && tmi < template.MaterialNames.Count)
+            return tmi;
 
         // No name match: fall back to order only when it is unambiguous.
         if (meshCount <= template.MaterialNames.Count)
@@ -61,15 +67,24 @@ internal static class ModelImportShared
 
     public static int IndexInTable(List<ushort> boneTable, ushort boneIndex) => boneTable.IndexOf(boneIndex);
 
-    private static readonly Regex PartNamePattern = new(@"^mesh_(\d+)\.(\d+)", RegexOptions.Compiled);
+    // TexTools/Penumbra convention: only the numbers at the end of the name
+    // matter. An optional prefix ending in '_', whitespace or '^' (TexTools'
+    // separator set), the mesh number, then optionally '.' or '-' and the
+    // part number. A trailing "(.NNN)*" run also absorbs Blender's duplicate
+    // suffixes after an explicit part number ("mesh_2.1.001" is mesh 2 part 1).
+    private static readonly Regex PartNamePattern = new(
+        @"^(?:.*[_\s^])?(\d+)(?:[.\-](\d+))?(?:\.\d+)*$", RegexOptions.Compiled);
 
     /// <summary>The export name for one submesh part of a mesh.</summary>
     public static string PartName(int meshIndex, int partIndex) => $"mesh_{meshIndex}.{partIndex}";
 
     /// <summary>
-    /// Recognizes the exporters' "mesh_2.1" part naming (tolerating Blender's
-    /// ".001" duplicate suffixes after the part number). Plain "mesh_2" names
-    /// from part-unaware exports do not match; those meshes import whole.
+    /// Recognizes the TexTools/Penumbra mesh naming convention: only the
+    /// trailing numbers count, not the rest of the name. "chest 0.0",
+    /// "foot 0.6", "mesh_2.1" and "Group 3" (part defaults to 0) all parse;
+    /// Blender's ".001" duplicate suffixes after an explicit part number are
+    /// tolerated. Names without trailing numbers do not match; those meshes
+    /// import whole.
     /// </summary>
     public static bool TryParsePartName(string? name, out int meshIndex, out int partIndex)
     {
@@ -80,8 +95,14 @@ internal static class ModelImportShared
         var match = PartNamePattern.Match(name);
         if (!match.Success)
             return false;
-        meshIndex = int.Parse(match.Groups[1].Value);
-        partIndex = int.Parse(match.Groups[2].Value);
+        if (!int.TryParse(match.Groups[1].Value, out meshIndex))
+            return false;
+        if (match.Groups[2].Success && !int.TryParse(match.Groups[2].Value, out partIndex))
+        {
+            meshIndex = 0;
+            return false;
+        }
+
         return true;
     }
 

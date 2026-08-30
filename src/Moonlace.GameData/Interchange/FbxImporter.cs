@@ -14,8 +14,11 @@ namespace Moonlace.GameData.Interchange;
 /// the template, material slots are mapped by material name, skin weights
 /// are remapped through bone names onto the template's bone list, and
 /// per-mesh bone tables are extended as needed (up to the format's 64).
-/// Part-named meshes ("mesh_2.1") are regrouped into their FFXIV mesh with
-/// the submesh partition — and the template's attribute masks — restored.
+/// Mesh names follow the TexTools/Penumbra convention: only the trailing
+/// numbers matter ("chest 0.0", "foot 0.6", "mesh_2.1" are all mesh N part
+/// M; a bare trailing number is part 0), so such meshes are regrouped into
+/// their FFXIV mesh with the submesh partition and the template's
+/// attribute masks restored.
 ///
 /// FBX specifics: assimp triangulates and merges duplicate corners, node
 /// transforms are baked into the geometry, coordinates are converted from
@@ -47,16 +50,18 @@ public static class FbxImporter
     {
         var unitsToMeters = UnitScaleFactor(scene) / FbxExporter.MetersToFbxUnits;
 
-        var triangleMeshes = new List<(nint Mesh, Matrix4x4 Transform)>();
-        var transforms = new Dictionary<nint, Matrix4x4>();
-        CollectMeshTransforms(scene->MRootNode, Matrix4x4.Identity, transforms);
+        var triangleMeshes = new List<(nint Mesh, Matrix4x4 Transform, string? NodeName)>();
+        var nodes = new Dictionary<nint, (Matrix4x4 Transform, string Name)>();
+        CollectMeshNodes(scene->MRootNode, Matrix4x4.Identity, nodes);
         for (var i = 0; i < scene->MNumMeshes; i++)
         {
             var mesh = scene->MMeshes[i];
             if (mesh->MPrimitiveTypes != (uint)PrimitiveType.Triangle || mesh->MNumFaces == 0)
                 continue; // stray points/lines split out by SortByPrimitiveType
+            var found = nodes.TryGetValue((nint)i, out var node);
             triangleMeshes.Add(((nint)mesh,
-                transforms.TryGetValue((nint)i, out var transform) ? transform : Matrix4x4.Identity));
+                found ? node.Transform : Matrix4x4.Identity,
+                found && node.Name.Length > 0 ? node.Name : null));
         }
 
         if (triangleMeshes.Count == 0)
@@ -70,15 +75,19 @@ public static class FbxImporter
         if (boneTables.Count == 0)
             boneTables.Add([]);
 
-        // Group meshes into FFXIV meshes: part-named meshes ("mesh_2.1",
-        // written by the exporter per submesh) regroup by mesh number so the
+        // Group meshes into FFXIV meshes: names ending in the TexTools-style
+        // numbers ("chest 0.0", "mesh_2.1") regroup by mesh number so the
         // partition and its attributes survive; other names import whole.
         var groups = new List<(int? TemplateMeshIndex, List<(nint Mesh, Matrix4x4 Transform, int PartNumber)> Parts)>();
         var groupByMeshNumber = new Dictionary<int, int>();
-        foreach (var (meshPointer, transform) in triangleMeshes)
+        foreach (var (meshPointer, transform, nodeName) in triangleMeshes)
         {
+            // Blender renames the object (the node) in the outliner, not the
+            // mesh datablock, so the node name takes priority (TexTools reads
+            // node names too); the mesh's own name is the fallback.
             var name = ReadString(((AiMesh*)meshPointer)->MName);
-            if (ModelImportShared.TryParsePartName(name, out var meshNumber, out var partNumber))
+            if (ModelImportShared.TryParsePartName(nodeName, out var meshNumber, out var partNumber)
+                || ModelImportShared.TryParsePartName(name, out meshNumber, out partNumber))
             {
                 if (!groupByMeshNumber.TryGetValue(meshNumber, out var g))
                 {
@@ -103,11 +112,13 @@ public static class FbxImporter
             var groupLabel = groupMaterialName
                 ?? (firstMesh->MName.Length > 0 ? ReadString(firstMesh->MName) : $"mesh {gi}");
 
-            var materialIndex = ModelImportShared.ResolveMaterialIndex(
-                groupMaterialName, gi, groups.Count, template, groupLabel);
-            var templateMesh = templateMeshIndex is { } tmi && tmi < template.Meshes.Count
-                ? template.Meshes[tmi]
+            var meshNumberKnown = templateMeshIndex is { } tmi && tmi < template.Meshes.Count;
+            var templateMesh = meshNumberKnown
+                ? template.Meshes[templateMeshIndex!.Value]
                 : gi < template.Meshes.Count ? template.Meshes[gi] : template.Meshes[0];
+            var templateMaterial = meshNumberKnown ? templateMesh.MaterialIndex : (int?)null;
+            var materialIndex = ModelImportShared.ResolveMaterialIndex(
+                groupMaterialName, gi, groups.Count, template, groupLabel, templateMaterial);
             var boneTableIndex = Math.Min(templateMesh.BoneTableIndex, boneTables.Count - 1);
             var table = boneTables[boneTableIndex];
 
@@ -118,7 +129,8 @@ public static class FbxImporter
                 var materialName = MaterialName(scene, mesh->MMaterialIndex);
                 var label = materialName ?? (mesh->MName.Length > 0 ? ReadString(mesh->MName) : groupLabel);
                 if (materialName is not null
-                    && ModelImportShared.ResolveMaterialIndex(materialName, gi, groups.Count, template, label) != materialIndex)
+                    && ModelImportShared.ResolveMaterialIndex(
+                        materialName, gi, groups.Count, template, label, templateMaterial) != materialIndex)
                     throw new ModelImportException(
                         $"The parts of \"{groupLabel}\" use different materials; an FFXIV mesh has exactly one. " +
                         "Give all parts of a mesh the same material.");
@@ -267,18 +279,22 @@ public static class FbxImporter
     private static Vector3 SafeNormalize(Vector3 v)
         => v.LengthSquared() > 1e-10f ? Vector3.Normalize(v) : Vector3.UnitY;
 
-    /// <summary>Global transform per mesh index, in row-vector convention (assimp matrices are transposed).</summary>
-    private static unsafe void CollectMeshTransforms(
-        AiNode* node, Matrix4x4 parentGlobal, Dictionary<nint, Matrix4x4> transforms)
+    /// <summary>
+    /// Global transform and node name per mesh index, in row-vector
+    /// convention (assimp matrices are transposed).
+    /// </summary>
+    private static unsafe void CollectMeshNodes(
+        AiNode* node, Matrix4x4 parentGlobal, Dictionary<nint, (Matrix4x4 Transform, string Name)> nodes)
     {
         if (node == null)
             return;
 
         var global = Matrix4x4.Transpose(node->MTransformation) * parentGlobal;
+        var name = ReadString(node->MName);
         for (var i = 0; i < node->MNumMeshes; i++)
-            transforms.TryAdd((nint)node->MMeshes[i], global);
+            nodes.TryAdd((nint)node->MMeshes[i], (global, name));
         for (var c = 0; c < node->MNumChildren; c++)
-            CollectMeshTransforms(node->MChildren[c], global, transforms);
+            CollectMeshNodes(node->MChildren[c], global, nodes);
     }
 
     /// <summary>FBX units per centimeter; 1 (centimeters) when the file does not say.</summary>

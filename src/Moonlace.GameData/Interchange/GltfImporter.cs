@@ -10,8 +10,11 @@ namespace Moonlace.GameData.Interchange;
 /// material name (falling back to primitive order when unambiguous), skin
 /// weights are remapped through joint names onto the template's bone list,
 /// and per-mesh bone tables are extended as needed (up to the format's 64).
-/// Part-named meshes ("mesh_2.1") are regrouped into their FFXIV mesh with
-/// the submesh partition — and the template's attribute masks — restored.
+/// Mesh names follow the TexTools/Penumbra convention: only the trailing
+/// numbers matter ("chest 0.0", "foot 0.6", "mesh_2.1" are all mesh N part
+/// M; a bare trailing number is part 0), so such meshes are regrouped into
+/// their FFXIV mesh with the submesh partition and the template's
+/// attribute masks restored.
 /// </summary>
 public static class GltfImporter
 {
@@ -56,26 +59,36 @@ public static class GltfImporter
             skinMaps[skin] = map;
         }
 
-        // Node lookup: which skin is used to render each mesh.
+        // Node lookup: which skin is used to render each mesh, and the node's
+        // own name. Renaming in Blender's outliner renames the object (the
+        // node), not the mesh datablock, so the node name is what users
+        // actually type; it takes priority over the mesh name (TexTools reads
+        // node names too).
         var skinByMesh = new Dictionary<Mesh, Skin>();
+        var nodeNameByMesh = new Dictionary<Mesh, string>();
         foreach (var node in gltf.LogicalNodes)
         {
-            if (node.Mesh is not null && node.Skin is not null)
+            if (node.Mesh is null)
+                continue;
+            if (node.Skin is not null)
                 skinByMesh[node.Mesh] = node.Skin;
+            if (!string.IsNullOrEmpty(node.Name))
+                nodeNameByMesh.TryAdd(node.Mesh, node.Name);
         }
 
         var boneTables = template.BoneTables.Select(t => t.ToList()).ToList();
         if (boneTables.Count == 0)
             boneTables.Add([]);
 
-        // Group primitives into meshes: part-named primitives ("mesh_2.1",
-        // written by the exporter per submesh) regroup by mesh number so the
+        // Group primitives into meshes: names ending in the TexTools-style
+        // numbers ("chest 0.0", "mesh_2.1") regroup by mesh number so the
         // partition and its attributes survive; other names import whole.
         var groups = new List<(int? TemplateMeshIndex, List<(Mesh Mesh, MeshPrimitive Primitive, int PartNumber)> Parts)>();
         var groupByMeshNumber = new Dictionary<int, int>();
         foreach (var (mesh, primitive) in primitives)
         {
-            if (ModelImportShared.TryParsePartName(mesh.Name, out var meshNumber, out var partNumber))
+            if (ModelImportShared.TryParsePartName(nodeNameByMesh.GetValueOrDefault(mesh), out var meshNumber, out var partNumber)
+                || ModelImportShared.TryParsePartName(mesh.Name, out meshNumber, out partNumber))
             {
                 if (!groupByMeshNumber.TryGetValue(meshNumber, out var g))
                 {
@@ -98,11 +111,13 @@ public static class GltfImporter
             var first = parts[0];
             var groupLabel = first.Primitive.Material?.Name is { Length: > 0 } n ? n : (first.Mesh.Name ?? $"mesh {gi}");
 
-            var materialIndex = ModelImportShared.ResolveMaterialIndex(
-                first.Primitive.Material?.Name, gi, groups.Count, template, groupLabel);
-            var templateMesh = templateMeshIndex is { } tmi && tmi < template.Meshes.Count
-                ? template.Meshes[tmi]
+            var meshNumberKnown = templateMeshIndex is { } tmi && tmi < template.Meshes.Count;
+            var templateMesh = meshNumberKnown
+                ? template.Meshes[templateMeshIndex!.Value]
                 : gi < template.Meshes.Count ? template.Meshes[gi] : template.Meshes[0];
+            var templateMaterial = meshNumberKnown ? templateMesh.MaterialIndex : (int?)null;
+            var materialIndex = ModelImportShared.ResolveMaterialIndex(
+                first.Primitive.Material?.Name, gi, groups.Count, template, groupLabel, templateMaterial);
             var boneTableIndex = Math.Min(templateMesh.BoneTableIndex, boneTables.Count - 1);
 
             var importedParts = new List<ModelImportShared.ImportedPart>();
@@ -110,7 +125,8 @@ public static class GltfImporter
             {
                 var label = primitive.Material?.Name is { Length: > 0 } pn ? pn : (mesh.Name ?? groupLabel);
                 if (primitive.Material?.Name is { Length: > 0 } partMaterial
-                    && ModelImportShared.ResolveMaterialIndex(partMaterial, gi, groups.Count, template, label) != materialIndex)
+                    && ModelImportShared.ResolveMaterialIndex(
+                        partMaterial, gi, groups.Count, template, label, templateMaterial) != materialIndex)
                     throw new ModelImportException(
                         $"The parts of \"{groupLabel}\" use different materials; an FFXIV mesh has exactly one. " +
                         "Give all parts of a mesh the same material.");
