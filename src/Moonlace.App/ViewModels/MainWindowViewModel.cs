@@ -30,6 +30,8 @@ public partial class MainWindowViewModel : ViewModelBase
 
     public ModToolsViewModel ModTools { get; }
 
+    public AnimationToolsViewModel AnimationTools { get; }
+
     public SessionsViewModel Sessions { get; }
 
     [ObservableProperty]
@@ -54,6 +56,7 @@ public partial class MainWindowViewModel : ViewModelBase
         PenumbraViewModel penumbra,
         FilesViewModel files,
         ModToolsViewModel modTools,
+        AnimationToolsViewModel animationTools,
         SessionsViewModel sessions,
         ILogger<MainWindowViewModel> logger)
     {
@@ -65,6 +68,7 @@ public partial class MainWindowViewModel : ViewModelBase
         Penumbra = penumbra;
         Files = files;
         ModTools = modTools;
+        AnimationTools = animationTools;
         Sessions = sessions;
         _logger = logger;
 
@@ -149,6 +153,11 @@ public partial class MainWindowViewModel : ViewModelBase
             var autoRetarget = Environment.GetEnvironmentVariable("MOONLACE_AUTORETARGET");
             if (!string.IsNullOrEmpty(autoRetarget))
                 await ModTools.RetargetHeadlessAsync(autoRetarget);
+
+            // Dev/testing hook: retarget an animation modpack headlessly.
+            var autoRetargetAnim = Environment.GetEnvironmentVariable("MOONLACE_AUTORETARGETANIM");
+            if (!string.IsNullOrEmpty(autoRetargetAnim))
+                await AnimationTools.RetargetHeadlessAsync(autoRetargetAnim);
 
             // Dev/testing hook: import a modpack as edits once a destination
             // (item selection or Penumbra link) exists.

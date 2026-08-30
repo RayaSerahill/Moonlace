@@ -620,46 +620,10 @@ public sealed partial class ModRetargeter
         string modpackPath,
         List<string> warnings,
         Func<PenumbraModInfo, IReadOnlyDictionary<string, string>, string, T> work)
-    {
-        var tempDir = Path.Combine(Path.GetTempPath(), "moonlace-retarget-" + Guid.NewGuid().ToString("N"));
-        try
-        {
-            ModpackFile.ExtractToFolder(modpackPath, tempDir, warnings);
-            var info = _link.Inspect(tempDir);
-            var effective = ModpackImporter.EffectiveFiles(info);
-            return work(info, effective, Path.GetFullPath(info.Directory));
-        }
-        finally
-        {
-            try
-            {
-                if (Directory.Exists(tempDir))
-                    Directory.Delete(tempDir, recursive: true);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "Could not remove the temporary retarget folder {Dir}", tempDir);
-            }
-        }
-    }
+        => ModpackExtraction.RunExtracted(_link, _logger, modpackPath, warnings, work);
 
     private static byte[]? ReadModFile(string root, string rel, string gamePath, List<string> warnings)
-    {
-        var file = Path.GetFullPath(ModPaths.ResolveCaseInsensitive(root, rel));
-        if (!file.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.Ordinal))
-        {
-            warnings.Add($"\"{rel}\" points outside the modpack: skipped.");
-            return null;
-        }
-
-        if (!File.Exists(file))
-        {
-            warnings.Add($"Missing modpack file for {gamePath} ({rel}).");
-            return null;
-        }
-
-        return File.ReadAllBytes(file);
-    }
+        => ModpackExtraction.ReadModFile(root, rel, gamePath, warnings);
 
     [GeneratedRegex(@"^chara/(equipment|accessory)/([ea]\d{4})/")]
     private static partial Regex SetDirRegex();
