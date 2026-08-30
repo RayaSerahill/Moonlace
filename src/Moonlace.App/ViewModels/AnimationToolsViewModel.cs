@@ -242,6 +242,19 @@ public partial class AnimationToolsViewModel : ViewModelBase
         SaveRetargetedCommand.NotifyCanExecuteChanged();
     }
 
+    /// <summary>
+    /// A destination's display name as a file name fragment: the slash
+    /// command parenthetical goes ("Dance (/dance)" → "Dance"), and any
+    /// slashes a raw timeline key carries become hyphens.
+    /// </summary>
+    internal static string FileNameSafeDestination(string displayName)
+    {
+        var parenthetical = displayName.IndexOf(" (/", StringComparison.Ordinal);
+        if (parenthetical > 0 && displayName.EndsWith(')'))
+            displayName = displayName[..parenthetical];
+        return displayName.Replace('/', '-');
+    }
+
     private bool CanSaveRetargeted => !IsBusy && Assignments.Any(a => a.IsAssigned);
 
     [RelayCommand(CanExecute = nameof(CanSaveRetargeted))]
@@ -258,9 +271,11 @@ public partial class AnimationToolsViewModel : ViewModelBase
             return;
 
         ErrorText = null;
-        var suggestedName = assignments.Length == 1
-            ? $"{ModName} ({assignments[0].Destination.DisplayName}).pmp"
-            : $"{ModName} (retargeted).pmp";
+        var destinationNames = assignments
+            .Select(a => FileNameSafeDestination(a.Destination.DisplayName))
+            .Distinct()
+            .ToArray();
+        var suggestedName = $"{ModName} - {string.Join(" + ", destinationNames)}.pmp";
         var output = await _files.SaveFileAsync(
             "Save retargeted modpack", suggestedName, "Penumbra Mod Package", ["*.pmp"]);
         if (output is null)
