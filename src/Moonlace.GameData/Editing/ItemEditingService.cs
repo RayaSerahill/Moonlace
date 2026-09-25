@@ -1,8 +1,11 @@
+using System.Text.Json.Nodes;
+using System.Text.RegularExpressions;
 using Microsoft.Extensions.Logging;
 using Moonlace.Core.Models;
 using Moonlace.Core.Session;
 using Moonlace.GameData.Export;
 using Moonlace.GameData.Interchange;
+using Moonlace.GameData.Meta;
 using Moonlace.GameData.Parsing;
 using Moonlace.GameData.Resolution;
 
@@ -99,6 +102,15 @@ public sealed class ItemEditingService
             _link.WriteAsset(gamePath, data);
         else
             _session.StoreAsset(gamePath, kind, data);
+    }
+
+    /// <summary>Adds a metadata manipulation where edits go: the linked mod, or the active session item.</summary>
+    private void StoreManipulation(JsonObject manipulation)
+    {
+        if (_link.IsLinked)
+            _link.SetManipulation(manipulation);
+        else
+            _session.StoreManipulation(manipulation);
     }
 
     /// <summary>Everything the Material/Texture tabs show for an item, using effective assets.</summary>
@@ -449,14 +461,49 @@ public sealed class ItemEditingService
         }, ct);
     }
 
-    /// <summary>Imports a GLTF/GLB or FBX (picked by extension) as the session replacement for the item's model and stores it in the session.</summary>
-    public Task ImportModelAsync(EquipmentItem item, string modelPath, CancellationToken ct = default)
+    /// <summary>
+    /// Imports a GLTF/GLB or FBX (picked by extension) as the replacement for
+    /// the item's model and stores it (session, or the linked mod).
+    ///
+    /// Body kits are built on the base bodies (Midlander ♀ for every female
+    /// race, Midlander ♂ for male ones) and the game reshapes a base model for
+    /// the other races at runtime, but only when that race has no model of
+    /// its own. So an import onto any other race's version is stored at its
+    /// base race's path, and an EQDP manipulation turns the selected race's
+    /// own model off (and the base race's on, should the item lack one), the
+    /// way TexTools/Penumbra mods cover every race from one base model.
+    /// Returns a user-facing note when that redirect happened.
+    /// </summary>
+    public Task<string?> ImportModelAsync(EquipmentItem item, string modelPath, CancellationToken ct = default)
     {
         return Task.Run(() =>
         {
             var resolved = _resolver.Resolve(item);
-            var template = ParseEffectiveModel(resolved);
+            var targetPath = resolved.MdlPath;
+            string? note = null;
+            var manipulations = new List<JsonObject>();
 
+            var selectedRace = SelectedRace(item, resolved);
+            if (selectedRace is not null && AssetPathResolver.GenderBaseRace(selectedRace) is var baseRace
+                && baseRace != selectedRace)
+            {
+                targetPath = _resolver.GetEquipmentModelPath(item, baseRace);
+                // Template: the base model when there is one (its materials
+                // and attributes are what the game pairs with it), else the
+                // model the selected version shows now.
+                if (_assets.FileExists(targetPath))
+                    resolved = _resolver.ResolveForRace(item, baseRace);
+
+                if (((_resolver.EffectiveEqdpBits(item, selectedRace) ?? 0) & 2) != 0)
+                    manipulations.Add(EqdpManipulation(item, selectedRace, (_resolver.VanillaEqdpBits(item, selectedRace) ?? 0) & 1));
+                if (((_resolver.EffectiveEqdpBits(item, baseRace) ?? 0) & 2) == 0)
+                    manipulations.Add(EqdpManipulation(item, baseRace, ((_resolver.VanillaEqdpBits(item, baseRace) ?? 0) & 1) | 2));
+
+                note = $"Imported onto the {RaceLabel(baseRace)} base model; {RaceLabel(selectedRace)} now uses it " +
+                       "and the game reshapes it for that race.";
+            }
+
+            var template = ParseEffectiveModel(resolved);
             var import = IsFbxPath(modelPath)
                 ? FbxImporter.Import(modelPath, template)
                 : GltfImporter.Import(modelPath, template);
@@ -471,11 +518,36 @@ public sealed class ItemEditingService
                 _logger.LogInformation("Import added {Count} bones the original model did not use: {Bones}",
                     import.AddedBones.Count, string.Join(", ", import.AddedBones));
 
-            Store(resolved.MdlPath, SessionAssetKind.Model, written);
-            _logger.LogInformation("Imported {Model} as session model for {Path} ({Meshes} meshes)",
-                modelPath, resolved.MdlPath, import.Meshes.Count);
+            Store(targetPath, SessionAssetKind.Model, written);
+            foreach (var manipulation in manipulations)
+                StoreManipulation(manipulation);
+            _logger.LogInformation("Imported {Model} as the model for {Path} ({Meshes} meshes, {Manipulations} EQDP changes)",
+                modelPath, targetPath, import.Meshes.Count, manipulations.Count);
+            return note;
         }, ct);
     }
+
+    private static readonly Regex EquipmentRaceCode = new(@"/c(\d{4})[ea]\d{4}_[a-z]{3}\.mdl$", RegexOptions.Compiled);
+
+    /// <summary>The race version being edited: the selector's choice, else the race code in the resolved model path.</summary>
+    private string? SelectedRace(EquipmentItem item, ResolvedModelInfo resolved)
+    {
+        if (item.IsWeapon || item.IsBodyPart || !AssetPathResolver.TryEqdpSlot(item, out _))
+            return null;
+        if (_resolver.PreferredRaceCode is { } preferred)
+            return preferred;
+        var match = EquipmentRaceCode.Match(resolved.MdlPath);
+        return match.Success ? match.Groups[1].Value : null;
+    }
+
+    private static JsonObject EqdpManipulation(EquipmentItem item, string raceCode, int bits)
+    {
+        AssetPathResolver.TryEqdpSlot(item, out var slot);
+        return EqdpTable.Manipulation(raceCode, (ushort)item.ModelId, slot, bits);
+    }
+
+    private static string RaceLabel(string raceCode) =>
+        AssetPathResolver.KnownRaces.FirstOrDefault(r => r.Code == raceCode)?.Label ?? $"c{raceCode}";
 
     /// <summary>Exports the effective texture as PNG. Does not touch session state.</summary>
     public Task ExportTexturePngAsync(string texPath, string outputPath, CancellationToken ct = default)
