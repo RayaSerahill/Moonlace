@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moonlace.Core.Models;
 using Moonlace.Core.Session;
@@ -206,5 +207,38 @@ public sealed class SessionToolsTests : IDisposable
 
         Assert.False(Directory.Exists(Path.Combine(_root, id)));
         Assert.Empty(service.GetTouchedAssets());
+    }
+    private static JsonObject EqdpNode(int entry) => new()
+    {
+        ["Type"] = "Eqdp",
+        ["Manipulation"] = new JsonObject
+        {
+            ["Entry"] = entry, ["Gender"] = "Female", ["Race"] = "Miqote", ["SetId"] = 16, ["Slot"] = "Body",
+        },
+    };
+
+    [Fact]
+    public void ManipulationsPersistReplaceByTargetAndDiscardWithTheItem()
+    {
+        var service = Create();
+        var coat = Item(1, "Coat");
+        service.ActivateForItem(coat);
+
+        service.StoreManipulation(EqdpNode(8));
+        service.StoreManipulation(EqdpNode(0)); // same target, new value: replaces
+        Assert.True(service.IsDirty);
+        var stored = Assert.Single(service.Manipulations);
+        Assert.Equal(0, stored["Manipulation"]!["Entry"]!.GetValue<int>());
+
+        // Survives switching items and back (read from the manifest).
+        service.ActivateForItem(Item(2, "Hat"));
+        Assert.Empty(service.Manipulations);
+        Assert.False(service.IsDirty);
+        service.ActivateForItem(coat);
+        Assert.Single(service.Manipulations);
+
+        service.DiscardActiveSession();
+        Assert.Empty(service.Manipulations);
+        Assert.False(service.IsDirty);
     }
 }
