@@ -82,7 +82,7 @@ public sealed class GltfPartRoundTripTests : IDisposable
     }
 
     [Fact]
-    public void PartsWithDifferentMaterialsAreRejected()
+    public void MaterialAssignmentsInTheFileAreIgnored()
     {
         var model = BuildPartitionedModel();
         var twoMaterials = new ParsedModel
@@ -96,7 +96,8 @@ public sealed class GltfPartRoundTripTests : IDisposable
         var glb = Path.Combine(_tempDir, "mixed.glb");
         GltfExporter.Export(model, [new ModelMaterialInfo { Name = model.MaterialNames[0] }], glb);
 
-        // Give one part its own, differently named material so the parts disagree.
+        // Give one part a different material, even one the template knows:
+        // the file's assignments do not count, Penumbra's mapping does.
         var gltf = SharpGLTF.Schema2.ModelRoot.Load(glb);
         var secondPart = gltf.LogicalMeshes.First(m => m.Name == "mesh_0.1");
         var other = gltf.CreateMaterial("/mt_c0101e0001_top_b.mtrl");
@@ -104,7 +105,10 @@ public sealed class GltfPartRoundTripTests : IDisposable
         var mixed = Path.Combine(_tempDir, "mixed2.glb");
         gltf.SaveGLB(mixed);
 
-        var ex = Assert.Throws<ModelImportException>(() => GltfImporter.Import(mixed, twoMaterials));
-        Assert.Contains("different materials", ex.Message);
+        var import = GltfImporter.Import(mixed, twoMaterials);
+        var mesh = Assert.Single(import.Meshes);
+        Assert.Equal(0, mesh.MaterialIndex);
+        Assert.Equal(twoMaterials.MaterialNames[0], mesh.MaterialName);
+        Assert.Equal(model.Meshes[0].Submeshes, mesh.Submeshes);
     }
 }
