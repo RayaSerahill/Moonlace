@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moonlace.Core.Penumbra;
 
@@ -569,5 +570,77 @@ public sealed class PenumbraLinkServiceTests : IDisposable
         Assert.True(File.Exists(Path.Combine(dir, "default_mod.json")));
         Assert.True(File.Exists(Path.Combine(dir, "group_001_variant.json")));
         Assert.False(ReadJson(Path.Combine(dir, "meta.json")).TryGetProperty("DefaultData", out _));
+    }
+    private static JsonObject EqdpNode(string race, int entry) => new()
+    {
+        ["Type"] = "Eqdp",
+        ["Manipulation"] = new JsonObject
+        {
+            ["Entry"] = entry, ["Gender"] = "Female", ["Race"] = race, ["SetId"] = 16, ["Slot"] = "Body",
+        },
+    };
+
+    [Fact]
+    public void ManipulationsGoIntoV4MetaJsonAndRevertRemovesThem()
+    {
+        var dir = CreateFreshV4Mod("manips");
+        var metaBefore = File.ReadAllText(Path.Combine(dir, "meta.json"));
+        var link = Create();
+        link.Link(dir, []);
+
+        link.SetManipulation(EqdpNode("Miqote", 8));
+        link.SetManipulation(EqdpNode("Miqote", 0)); // same target: replaced
+        link.SetManipulation(EqdpNode("Midlander", 12));
+
+        var stored = ReadJson(Path.Combine(dir, "meta.json")).GetProperty("DefaultData").GetProperty("Manipulations");
+        Assert.Equal(2, stored.GetArrayLength());
+        Assert.Equal(0, stored[0].GetProperty("Manipulation").GetProperty("Entry").GetInt32());
+        Assert.False(File.Exists(Path.Combine(dir, "default_mod.json")));
+        Assert.Equal(2, link.ActiveManipulations.Count);
+
+        link.RevertAll();
+        Assert.Equal(metaBefore, File.ReadAllText(Path.Combine(dir, "meta.json")));
+        Assert.Empty(link.ActiveManipulations);
+    }
+
+    [Fact]
+    public void ManipulationsGoIntoLegacyDefaultModJson()
+    {
+        var dir = CreateV3Mod();
+        var link = Create();
+        link.Link(dir, []);
+
+        link.SetManipulation(EqdpNode("Miqote", 0));
+
+        var stored = ReadJson(Path.Combine(dir, "default_mod.json")).GetProperty("Manipulations");
+        Assert.Equal(1, stored.GetArrayLength());
+        Assert.Single(link.ActiveManipulations);
+    }
+
+    [Fact]
+    public void SelectedOptionManipulationsOverrideDefaults()
+    {
+        var dir = Path.Combine(_root, "optmanips");
+        Directory.CreateDirectory(dir);
+        File.WriteAllText(Path.Combine(dir, "meta.json"), new JsonObject
+        {
+            ["FileVersion"] = 4,
+            ["Name"] = "Option Manips",
+            ["DefaultData"] = new JsonObject { ["Manipulations"] = new JsonArray(EqdpNode("Miqote", 8)) },
+            ["Groups"] = new JsonArray(new JsonObject
+            {
+                ["Name"] = "Fit", ["Type"] = "Single", ["DefaultSettings"] = 0,
+                ["Options"] = new JsonArray(
+                    new JsonObject { ["Name"] = "Own model" },
+                    new JsonObject { ["Name"] = "Base model", ["Manipulations"] = new JsonArray(EqdpNode("Miqote", 0)) }),
+            }),
+        }.ToJsonString());
+
+        var link = Create();
+        link.Link(dir, [[0]]);
+        Assert.Equal(8, link.ActiveManipulations.Single()["Manipulation"]!["Entry"]!.GetValue<int>());
+
+        link.SetSelection([[1]]);
+        Assert.Equal(0, link.ActiveManipulations.Single()["Manipulation"]!["Entry"]!.GetValue<int>());
     }
 }
