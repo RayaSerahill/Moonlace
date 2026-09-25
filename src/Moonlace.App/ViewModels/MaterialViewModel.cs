@@ -77,7 +77,12 @@ public partial class TextureSlotViewModel : ViewModelBase
     }
 }
 
-/// <summary>One mesh group in the Model tab with its selectable material assignment.</summary>
+/// <summary>
+/// One mesh group in the Model tab with its material assignment. The
+/// dropdown offers the model's materials, but the name is free text: any
+/// material path can be typed (e.g. a third-party body mod's
+/// "/mt_c0201b0001_bibo.mtrl") and is written into the model as-is.
+/// </summary>
 public partial class MeshAssignmentViewModel : ViewModelBase
 {
     public int MeshIndex { get; }
@@ -86,15 +91,45 @@ public partial class MeshAssignmentViewModel : ViewModelBase
 
     public System.Collections.Generic.IReadOnlyList<string> MaterialNames { get; }
 
+    /// <summary>The material this mesh will use; bound to the editable dropdown's text.</summary>
     [ObservableProperty]
-    private int _selectedMaterialIndex;
+    [NotifyPropertyChangedFor(nameof(SelectedMaterialIndex), nameof(IsCustomMaterial))]
+    private string _materialName;
+
+    /// <summary>Slot of <see cref="MaterialName"/> in the model's list, or -1 for a typed name the model does not have.</summary>
+    public int SelectedMaterialIndex
+    {
+        get => IndexOf(MaterialName);
+        set
+        {
+            if (value >= 0 && value < MaterialNames.Count)
+                MaterialName = MaterialNames[value];
+        }
+    }
+
+    /// <summary>True when the typed name is not one of the model's materials (shown as a hint).</summary>
+    public bool IsCustomMaterial => !string.IsNullOrWhiteSpace(MaterialName) && IndexOf(MaterialName) < 0;
 
     public MeshAssignmentViewModel(EditableMesh mesh, System.Collections.Generic.IReadOnlyList<string> materialNames)
     {
         MeshIndex = mesh.Index;
         Label = $"Mesh {mesh.Index}  ·  {mesh.TriangleCount:N0} tris";
         MaterialNames = materialNames;
-        _selectedMaterialIndex = mesh.MaterialIndex;
+        _materialName = mesh.MaterialIndex >= 0 && mesh.MaterialIndex < materialNames.Count
+            ? materialNames[mesh.MaterialIndex]
+            : "";
+    }
+
+    private int IndexOf(string? name)
+    {
+        var trimmed = name?.Trim() ?? "";
+        for (var i = 0; i < MaterialNames.Count; i++)
+        {
+            if (string.Equals(MaterialNames[i], trimmed, System.StringComparison.Ordinal))
+                return i;
+        }
+
+        return -1;
     }
 }
 
