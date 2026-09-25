@@ -8,8 +8,10 @@ namespace Moonlace.GameData.Interchange;
 /// Imports a GLTF/GLB as a replacement for an existing FFXIV model. The
 /// original parsed model acts as the template: material slots are mapped by
 /// material name (falling back to primitive order when unambiguous), skin
-/// weights are remapped through joint names onto the template's bone list,
-/// and per-mesh bone tables are extended as needed (up to the format's 64).
+/// weights are remapped through joint names onto the template's bone list
+/// (any rig works: bones the template lacks are added, see
+/// <see cref="BoneNameResolver"/>), and per-mesh bone tables are extended as
+/// needed (up to the format's 64).
 /// Mesh names follow the TexTools/Penumbra convention: only the trailing
 /// numbers matter ("chest 0.0", "foot 0.6", "mesh_2.1" are all mesh N part
 /// M; a bare trailing number is part 0), so such meshes are regrouped into
@@ -37,26 +39,17 @@ public static class GltfImporter
         if (primitives.Count == 0)
             throw new ModelImportException("The file contains no meshes.");
 
-        // Joint index (per skin) → template bone-list index, resolved by name.
-        var boneIndexByName = new Dictionary<string, ushort>(StringComparer.Ordinal);
-        for (var i = 0; i < template.BoneNames.Count; i++)
-            boneIndexByName[template.BoneNames[i]] = (ushort)i;
-
-        var skinMaps = new Dictionary<Skin, ushort[]>();
+        // Joint index (per skin) → joint name. Names are resolved onto the
+        // bone list only when a vertex actually weights them, so a body
+        // kit's full armature (helpers, IK, leaf bones) never has to match.
+        var bones = new BoneNameResolver(template.BoneNames);
+        var skinMaps = new Dictionary<Skin, string[]>();
         foreach (var skin in gltf.LogicalSkins)
         {
-            var map = new ushort[skin.JointsCount];
+            var names = new string[skin.JointsCount];
             for (var j = 0; j < skin.JointsCount; j++)
-            {
-                var jointName = skin.GetJoint(j).Joint.Name ?? $"joint_{j}";
-                if (!boneIndexByName.TryGetValue(jointName, out var boneIndex))
-                    throw new ModelImportException(
-                        $"The model is weighted to bone \"{jointName}\", which does not exist in the original " +
-                        "FFXIV model. Keep the vertex groups that came with the exported model.");
-                map[j] = boneIndex;
-            }
-
-            skinMaps[skin] = map;
+                names[j] = skin.GetJoint(j).Joint.Name is { Length: > 0 } jointName ? jointName : $"joint_{j}";
+            skinMaps[skin] = names;
         }
 
         // Node lookup: which skin is used to render each mesh, and the node's
@@ -141,7 +134,10 @@ public static class GltfImporter
                 materialIndex, template.MaterialNames[materialIndex], boneTableIndex));
         }
 
-        return new ModelImportResult(meshes, boneTables.Select(t => t.ToArray()).ToArray());
+        return new ModelImportResult(meshes, boneTables.Select(t => t.ToArray()).ToArray(), bones.BoneNames)
+        {
+            AddedBones = bones.AddedBones,
+        };
 
         (ParsedVertex[] Vertices, uint[] Indices) ImportPrimitive(
             Mesh mesh, MeshPrimitive primitive, string label, List<ushort> table)
@@ -188,7 +184,7 @@ public static class GltfImporter
                 };
 
                 (v.BlendWeights, v.BlendIndicesPacked) = MapSkinning(
-                    jointsAccessor?[i], weightsAccessor?[i], skinMap, table, label);
+                    jointsAccessor?[i], weightsAccessor?[i], skinMap, bones, table, label);
                 vertices[i] = v;
             }
 
@@ -205,7 +201,8 @@ public static class GltfImporter
     }
 
     private static (Vector4 Weights, uint IndicesPacked) MapSkinning(
-        Vector4? joints, Vector4? weights, ushort[]? skinMap, List<ushort> boneTable, string label)
+        Vector4? joints, Vector4? weights, string[]? skinMap, BoneNameResolver bones, List<ushort> boneTable,
+        string label)
     {
         if (joints is null || weights is null || skinMap is null)
         {
@@ -224,7 +221,7 @@ public static class GltfImporter
             if (weight <= 0 || joint >= skinMap.Length)
                 continue;
 
-            var boneIndex = skinMap[joint];
+            var boneIndex = bones.Resolve(skinMap[joint]);
             ModelImportShared.EnsureInTable(boneTable, boneIndex, label);
             outWeights[influence] = weight;
             outIndices[influence] = (byte)ModelImportShared.IndexInTable(boneTable, boneIndex);
