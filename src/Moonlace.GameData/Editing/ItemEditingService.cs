@@ -37,6 +37,12 @@ public sealed class EditableMaterial
     public required MaterialColorRow[] ColorTable { get; init; }
 
     public required IReadOnlyList<EditableTexture> Textures { get; init; }
+
+    /// <summary>True when a texture is bound through the diffuse sampler (g_SamplerDiffuse).</summary>
+    public bool HasDiffuseSlot { get; init; }
+
+    /// <summary>Where a new diffuse texture would go by default (see <see cref="MaterialEdits.SuggestDiffusePath"/>).</summary>
+    public string SuggestedDiffusePath { get; init; } = "";
 }
 
 public sealed class EditableMesh
@@ -130,6 +136,7 @@ public sealed class ItemEditingService
                 // the viewport renders them white.
                 string mtrlPath;
                 ParsedMaterial parsed;
+                bool hasDiffuseSlot;
                 try
                 {
                     mtrlPath = _resolver.ResolveMaterialPath(resolved, name);
@@ -137,6 +144,7 @@ public sealed class ItemEditingService
                     if (bytes is null)
                         continue;
                     parsed = MtrlParser.Parse(bytes);
+                    hasDiffuseSlot = MaterialEdits.HasDiffuseSlot(MtrlDocument.Parse(bytes));
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
@@ -168,6 +176,8 @@ public sealed class ItemEditingService
                     Modified = _assets.IsModified(mtrlPath),
                     ColorTable = [.. parsed.ColorTable],
                     Textures = textures,
+                    HasDiffuseSlot = hasDiffuseSlot,
+                    SuggestedDiffusePath = MaterialEdits.SuggestDiffusePath(parsed.TexturePaths, mtrlPath),
                 });
             }
 
@@ -294,6 +304,55 @@ public sealed class ItemEditingService
             Store(mtrlPath, SessionAssetKind.Material, rewritten);
             _logger.LogInformation("Reassigned textures for {Path}: {Textures}",
                 mtrlPath, string.Join(", ", texturePaths));
+        }, ct);
+    }
+
+    /// <summary>
+    /// Adds a diffuse texture slot to a material (see
+    /// <see cref="MaterialEdits.AddDiffuseSlot"/>). The texture may not exist
+    /// yet; it shows up in the Texture tab to import an image into.
+    /// </summary>
+    public Task AddDiffuseSlotAsync(string mtrlPath, string texturePath, CancellationToken ct = default)
+    {
+        return Task.Run(() =>
+        {
+            texturePath = texturePath.Trim().Replace('\\', '/');
+            if (texturePath.Length == 0)
+                throw new ArgumentException("Enter a path for the diffuse texture.");
+            if (!texturePath.EndsWith(".tex", StringComparison.OrdinalIgnoreCase))
+                throw new ArgumentException("The diffuse texture path must end in .tex.");
+
+            var bytes = _assets.TryReadFile(mtrlPath)
+                ?? throw new InvalidDataException($"Material could not be read: {mtrlPath}");
+            var rewritten = MaterialEdits.AddDiffuseSlot(bytes, texturePath);
+
+            // Self-check before storing: both readers must see the new slot.
+            if (!MaterialEdits.HasDiffuseSlot(MtrlDocument.Parse(rewritten))
+                || !MtrlParser.Parse(rewritten).TexturePaths.Contains(texturePath))
+                throw new InvalidDataException("Internal error: the rewritten material failed verification.");
+
+            Store(mtrlPath, SessionAssetKind.Material, rewritten);
+            _logger.LogInformation("Added diffuse slot {Texture} to {Path}", texturePath, mtrlPath);
+        }, ct);
+    }
+
+    /// <summary>Switches a material's shader pack (name only; see <see cref="MaterialEdits.SetShader"/>).</summary>
+    public Task SetMaterialShaderAsync(string mtrlPath, string shaderPack, CancellationToken ct = default)
+    {
+        return Task.Run(() =>
+        {
+            shaderPack = shaderPack.Trim();
+            if (shaderPack.Length == 0)
+                throw new ArgumentException("Enter a shader pack name, e.g. character.shpk.");
+
+            var bytes = _assets.TryReadFile(mtrlPath)
+                ?? throw new InvalidDataException($"Material could not be read: {mtrlPath}");
+            var rewritten = MaterialEdits.SetShader(bytes, shaderPack);
+            if (MtrlParser.Parse(rewritten).ShaderPack != shaderPack)
+                throw new InvalidDataException("Internal error: the rewritten material failed verification.");
+
+            Store(mtrlPath, SessionAssetKind.Material, rewritten);
+            _logger.LogInformation("Switched {Path} to shader {Shader}", mtrlPath, shaderPack);
         }, ct);
     }
 
