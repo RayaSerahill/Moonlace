@@ -231,6 +231,22 @@
                                                 <ScrollViewer>
                                                     <StackPanel Spacing="10" Margin="2,4">
 
+                                                        <StackPanel Spacing="6">
+                                                            <TextBlock Text="Shader" FontWeight="SemiBold" FontSize="13" />
+                                                            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="6">
+                                                                <ComboBox Grid.Column="0" FontSize="12" IsEditable="True"
+                                                                          ItemsSource="{Binding KnownShaders}"
+                                                                          Text="{Binding ShaderText, Mode=TwoWay}"
+                                                                          HorizontalAlignment="Stretch" />
+                                                                <Button Grid.Column="1" Content="Apply shader" FontSize="12"
+                                                                        Command="{Binding ApplyShaderCommand}" />
+                                                            </Grid>
+                                                            <TextBlock Classes="dim" FontSize="11" TextWrapping="Wrap"
+                                                                       Text="Only the shader name changes; the color table, keys and textures stay as they are." />
+                                                        </StackPanel>
+
+                                                        <Rectangle Height="1" Fill="{StaticResource MoonBorderBrush}" Margin="0,2" />
+
                                                         <StackPanel Spacing="6" IsVisible="{Binding HasColorTable}">
                                                             <TextBlock Text="Color table" FontWeight="SemiBold" FontSize="13" />
                                                             <Grid ColumnDefinitions="120,*">
@@ -298,6 +314,18 @@
                                                         </ItemsControl>
                                                         <Button Classes="primary" Content="Apply textures" FontSize="12"
                                                                 HorizontalAlignment="Left" Command="{Binding ApplyTexturesCommand}" />
+
+                                                        <StackPanel Spacing="6" IsVisible="{Binding CanAddDiffuseSlot}">
+                                                            <TextBlock Classes="dim" FontSize="12" TextWrapping="Wrap"
+                                                                       Text="This material has no diffuse slot. Add one, then import an image to that path in the Texture tab." />
+                                                            <Grid ColumnDefinitions="70,*" Margin="0,3">
+                                                                <TextBlock Grid.Column="0" Classes="dim" FontSize="12"
+                                                                           Text="Diffuse" VerticalAlignment="Center" />
+                                                                <TextBox Grid.Column="1" FontSize="11" Text="{Binding NewDiffusePath}" />
+                                                            </Grid>
+                                                            <Button Content="Add diffuse slot" FontSize="12"
+                                                                    HorizontalAlignment="Left" Command="{Binding AddDiffuseSlotCommand}" />
+                                                        </StackPanel>
                                                     </StackPanel>
                                                 </ScrollViewer>
                                             </DataTemplate>
