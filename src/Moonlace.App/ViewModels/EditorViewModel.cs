@@ -54,6 +54,10 @@ public partial class EditorViewModel : ViewModelBase
     [ObservableProperty]
     private string? _errorText;
 
+    /// <summary>A one-off note from the last model import (e.g. that it went to the base race's model).</summary>
+    [ObservableProperty]
+    private string? _importNoticeText;
+
     [ObservableProperty]
     private bool _sessionDirty;
 
@@ -184,6 +188,7 @@ public partial class EditorViewModel : ViewModelBase
         _session.ActivateForItem(item);
         HasItem = item is not null;
         ErrorText = null;
+        ImportNoticeText = null;
         IsConfirmingDiscard = false;
         IsNewVersionPanelOpen = false;
         if (item is not null)
@@ -488,7 +493,9 @@ public partial class EditorViewModel : ViewModelBase
 
         await RunOperationAsync("Importing model…", async () =>
         {
-            await _editing.ImportModelAsync(_item, path);
+            ImportNoticeText = await _editing.ImportModelAsync(_item, path);
+            // The version labels may change ("Miqo'te ♀ (uses Midlander ♀)").
+            await LoadVersionsAsync(SelectedVersion?.Code);
             await RefreshAsync();
             NotifyAssetsChanged();
         });
