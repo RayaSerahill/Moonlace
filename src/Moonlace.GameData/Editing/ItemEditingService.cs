@@ -410,12 +410,16 @@ public sealed class ItemEditingService
             var import = IsFbxPath(modelPath)
                 ? FbxImporter.Import(modelPath, template)
                 : GltfImporter.Import(modelPath, template);
-            var written = MdlWriter.Write(template, import.Meshes, import.BoneTables);
+            var written = MdlWriter.Write(template, import.Meshes, import.BoneTables, import.BoneNames);
 
             // Sanity: our own parser must accept what we are about to store.
             var check = MdlParser.Parse(written);
-            if (check.Meshes.Count != import.Meshes.Count)
+            if (check.Meshes.Count != import.Meshes.Count || check.BoneNames.Count != import.BoneNames.Count)
                 throw new ModelImportException("Internal error: the rebuilt model failed verification.");
+
+            if (import.AddedBones.Count > 0)
+                _logger.LogInformation("Import added {Count} bones the original model did not use: {Bones}",
+                    import.AddedBones.Count, string.Join(", ", import.AddedBones));
 
             Store(resolved.MdlPath, SessionAssetKind.Model, written);
             _logger.LogInformation("Imported {Model} as session model for {Path} ({Meshes} meshes)",
