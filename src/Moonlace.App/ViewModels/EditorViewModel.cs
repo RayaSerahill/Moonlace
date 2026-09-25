@@ -501,7 +501,8 @@ public partial class EditorViewModel : ViewModelBase
             return;
         await RunOperationAsync("Reassigning materials…", async () =>
         {
-            await _editing.SetMeshMaterialsAsync(_item, MeshAssignments.Select(m => m.SelectedMaterialIndex).ToArray());
+            // By name, so typed third-party materials go through as-is.
+            await _editing.SetMeshMaterialsAsync(_item, MeshAssignments.Select(m => m.MaterialName).ToArray());
             await RefreshAsync();
             NotifyAssetsChanged();
         });
