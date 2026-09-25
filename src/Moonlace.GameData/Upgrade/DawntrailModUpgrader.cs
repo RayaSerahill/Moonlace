@@ -414,8 +414,11 @@ public sealed class DawntrailModUpgrader
         var meta = Path.Combine(root, "meta.json");
         if (!File.Exists(meta))
             return false;
+        // Same rule as Penumbra: FileVersion 4+ lives entirely in meta.json,
+        // even a fresh mod without DefaultData/Groups yet.
         return JsonNode.Parse(File.ReadAllText(meta)) is JsonObject json
-            && (json["DefaultData"] is not null || json["Groups"] is not null);
+            && ((json["FileVersion"] is JsonValue version && version.TryGetValue<int>(out var v) && v >= 4)
+                || json["DefaultData"] is not null || json["Groups"] is not null);
     }
 
     private static string? FindNormalPath(MtrlDocument doc)
