@@ -34,12 +34,31 @@ public partial class MaterialViewModel : ViewModelBase
 
     public ObservableCollection<TextureSlotViewModel> TextureSlots { get; } = [];
 
+    /// <summary>Shader packs offered in the dropdown; any other name can be typed.</summary>
+    public System.Collections.Generic.IReadOnlyList<string> KnownShaders => MaterialEdits.KnownShaders;
+
+    /// <summary>The shader pack to switch to, bound to the editable dropdown.</summary>
+    [ObservableProperty]
+    private string _shaderText;
+
+    /// <summary>False when no texture is bound as diffuse; the tab then offers to add one.</summary>
+    public bool HasDiffuseSlot { get; }
+
+    public bool CanAddDiffuseSlot => !HasDiffuseSlot;
+
+    /// <summary>Path for the diffuse texture to add, prefilled next to the normal map.</summary>
+    [ObservableProperty]
+    private string _newDiffusePath;
+
     public MaterialViewModel(EditorViewModel owner, EditableMaterial material)
     {
         _owner = owner;
         GamePath = material.GamePath;
         Name = material.Name;
         ShaderPack = material.ShaderPack;
+        _shaderText = material.ShaderPack;
+        HasDiffuseSlot = material.HasDiffuseSlot;
+        _newDiffusePath = material.SuggestedDiffusePath;
         Modified = material.Modified;
         for (var i = 0; i < material.ColorTable.Length; i++)
             Rows.Add(new ColorRowViewModel(i, material.ColorTable[i]));
@@ -57,6 +76,12 @@ public partial class MaterialViewModel : ViewModelBase
 
     [RelayCommand]
     private Task ApplyTexturesAsync() => _owner.ApplyMaterialTexturesAsync(this);
+
+    [RelayCommand]
+    private Task ApplyShaderAsync() => _owner.ApplyMaterialShaderAsync(this);
+
+    [RelayCommand]
+    private Task AddDiffuseSlotAsync() => _owner.AddDiffuseSlotAsync(this);
 }
 
 /// <summary>One texture slot of a material; the path is editable and re-pointable at any game texture.</summary>
