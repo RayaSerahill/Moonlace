@@ -537,6 +537,26 @@ public partial class EditorViewModel : ViewModelBase
         });
     }
 
+    internal async Task ApplyMaterialShaderAsync(MaterialViewModel material)
+    {
+        await RunOperationAsync("Switching shader…", async () =>
+        {
+            await _editing.SetMaterialShaderAsync(material.GamePath, material.ShaderText);
+            await RefreshAsync();
+            NotifyAssetsChanged();
+        });
+    }
+
+    internal async Task AddDiffuseSlotAsync(MaterialViewModel material)
+    {
+        await RunOperationAsync("Adding diffuse slot…", async () =>
+        {
+            await _editing.AddDiffuseSlotAsync(material.GamePath, material.NewDiffusePath);
+            await RefreshAsync();
+            NotifyAssetsChanged();
+        });
+    }
+
     // --- Texture tab commands ---
 
     [RelayCommand]
