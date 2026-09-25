@@ -1,3 +1,5 @@
+using System.Text.Json.Nodes;
+
 namespace Moonlace.Core.Session;
 
 public enum SessionAssetKind
@@ -25,6 +27,13 @@ public sealed class SessionManifest
     public string ItemName { get; set; } = "";
 
     public List<SessionEntry> Entries { get; set; } = [];
+
+    /// <summary>
+    /// Penumbra metadata manipulations ({"Type", "Manipulation"} nodes) this
+    /// item's edits need, e.g. an EQDP entry that sends a race to its base
+    /// model. Exported with the files as the mod's default manipulations.
+    /// </summary>
+    public List<JsonObject> Manipulations { get; set; } = [];
 }
 
 /// <summary>Serialized as session.json in each session directory.</summary>
