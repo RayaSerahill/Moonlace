@@ -11,7 +11,8 @@ namespace Moonlace.GameData.Interchange;
 /// <summary>
 /// Imports an FBX file as a replacement for an existing FFXIV model,
 /// mirroring <see cref="GltfImporter"/>: the original parsed model acts as
-/// the template, material slots are mapped by material name, skin weights
+/// the template, each mesh keeps the material slot of the template mesh it
+/// replaces (the file's own material assignments are ignored), skin weights
 /// are remapped through bone names onto the template's bone list (any rig
 /// works: bones the template lacks are added, see
 /// <see cref="BoneNameResolver"/>), and per-mesh bone tables are extended as
@@ -108,17 +109,10 @@ public static class FbxImporter
         {
             var (templateMeshIndex, parts) = groups[gi];
             var firstMesh = (AiMesh*)parts[0].Mesh;
-            var groupMaterialName = MaterialName(scene, firstMesh->MMaterialIndex);
-            var groupLabel = groupMaterialName
-                ?? (firstMesh->MName.Length > 0 ? ReadString(firstMesh->MName) : $"mesh {gi}");
+            var groupLabel = firstMesh->MName.Length > 0 ? ReadString(firstMesh->MName) : $"mesh {gi}";
 
-            var meshNumberKnown = templateMeshIndex is { } tmi && tmi < template.Meshes.Count;
-            var templateMesh = meshNumberKnown
-                ? template.Meshes[templateMeshIndex!.Value]
-                : gi < template.Meshes.Count ? template.Meshes[gi] : template.Meshes[0];
-            var templateMaterial = meshNumberKnown ? templateMesh.MaterialIndex : (int?)null;
-            var materialIndex = ModelImportShared.ResolveMaterialIndex(
-                groupMaterialName, gi, groups.Count, template, groupLabel, templateMaterial);
+            var templateMesh = ModelImportShared.TemplateMeshFor(template, templateMeshIndex, gi);
+            var materialIndex = ModelImportShared.MaterialIndexFor(template, templateMesh);
             var boneTableIndex = Math.Min(templateMesh.BoneTableIndex, boneTables.Count - 1);
             var table = boneTables[boneTableIndex];
 
@@ -126,15 +120,7 @@ public static class FbxImporter
             foreach (var (meshPointer, transform, partNumber) in parts)
             {
                 var mesh = (AiMesh*)meshPointer;
-                var materialName = MaterialName(scene, mesh->MMaterialIndex);
-                var label = materialName ?? (mesh->MName.Length > 0 ? ReadString(mesh->MName) : groupLabel);
-                if (materialName is not null
-                    && ModelImportShared.ResolveMaterialIndex(
-                        materialName, gi, groups.Count, template, label, templateMaterial) != materialIndex)
-                    throw new ModelImportException(
-                        $"The parts of \"{groupLabel}\" use different materials; an FFXIV mesh has exactly one. " +
-                        "Give all parts of a mesh the same material.");
-
+                var label = mesh->MName.Length > 0 ? ReadString(mesh->MName) : groupLabel;
                 var (vertices, indices) = ImportMesh(mesh, transform, table, label);
                 importedParts.Add(new ModelImportShared.ImportedPart(vertices, indices, partNumber, label));
             }
@@ -324,26 +310,6 @@ public static class FbxImporter
         }
 
         return 1f;
-    }
-
-    private static unsafe string? MaterialName(AiScene* scene, uint materialIndex)
-    {
-        if (materialIndex >= scene->MNumMaterials)
-            return null;
-
-        var material = scene->MMaterials[materialIndex];
-        for (var p = 0; p < material->MNumProperties; p++)
-        {
-            var property = material->MProperties[p];
-            if (property->MType != PropertyTypeInfo.String || ReadString(property->MKey) != "?mat.name")
-                continue;
-            var length = *(int*)property->MData;
-            if (length <= 0 || length > property->MDataLength - 4)
-                return null;
-            return Encoding.UTF8.GetString(property->MData + 4, length);
-        }
-
-        return null;
     }
 
     private static unsafe string ReadString(AssimpString value)
