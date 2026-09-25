@@ -6,8 +6,9 @@ namespace Moonlace.GameData.Interchange;
 
 /// <summary>
 /// Imports a GLTF/GLB as a replacement for an existing FFXIV model. The
-/// original parsed model acts as the template: material slots are mapped by
-/// material name (falling back to primitive order when unambiguous), skin
+/// original parsed model acts as the template: each mesh keeps the material
+/// slot of the template mesh it replaces (the file's own material
+/// assignments are ignored; Penumbra's material mapping decides), skin
 /// weights are remapped through joint names onto the template's bone list
 /// (any rig works: bones the template lacks are added, see
 /// <see cref="BoneNameResolver"/>), and per-mesh bone tables are extended as
@@ -102,28 +103,16 @@ public static class GltfImporter
         {
             var (templateMeshIndex, parts) = groups[gi];
             var first = parts[0];
-            var groupLabel = first.Primitive.Material?.Name is { Length: > 0 } n ? n : (first.Mesh.Name ?? $"mesh {gi}");
+            var groupLabel = MeshLabel(first.Mesh) ?? $"mesh {gi}";
 
-            var meshNumberKnown = templateMeshIndex is { } tmi && tmi < template.Meshes.Count;
-            var templateMesh = meshNumberKnown
-                ? template.Meshes[templateMeshIndex!.Value]
-                : gi < template.Meshes.Count ? template.Meshes[gi] : template.Meshes[0];
-            var templateMaterial = meshNumberKnown ? templateMesh.MaterialIndex : (int?)null;
-            var materialIndex = ModelImportShared.ResolveMaterialIndex(
-                first.Primitive.Material?.Name, gi, groups.Count, template, groupLabel, templateMaterial);
+            var templateMesh = ModelImportShared.TemplateMeshFor(template, templateMeshIndex, gi);
+            var materialIndex = ModelImportShared.MaterialIndexFor(template, templateMesh);
             var boneTableIndex = Math.Min(templateMesh.BoneTableIndex, boneTables.Count - 1);
 
             var importedParts = new List<ModelImportShared.ImportedPart>();
             foreach (var (mesh, primitive, partNumber) in parts)
             {
-                var label = primitive.Material?.Name is { Length: > 0 } pn ? pn : (mesh.Name ?? groupLabel);
-                if (primitive.Material?.Name is { Length: > 0 } partMaterial
-                    && ModelImportShared.ResolveMaterialIndex(
-                        partMaterial, gi, groups.Count, template, label, templateMaterial) != materialIndex)
-                    throw new ModelImportException(
-                        $"The parts of \"{groupLabel}\" use different materials; an FFXIV mesh has exactly one. " +
-                        "Give all parts of a mesh the same material.");
-
+                var label = MeshLabel(mesh) ?? groupLabel;
                 var (vertices, indices) = ImportPrimitive(mesh, primitive, label, boneTables[boneTableIndex]);
                 importedParts.Add(new ModelImportShared.ImportedPart(vertices, indices, partNumber, label));
             }
@@ -138,6 +127,9 @@ public static class GltfImporter
         {
             AddedBones = bones.AddedBones,
         };
+
+        string? MeshLabel(Mesh mesh)
+            => nodeNameByMesh.GetValueOrDefault(mesh) ?? (string.IsNullOrEmpty(mesh.Name) ? null : mesh.Name);
 
         (ParsedVertex[] Vertices, uint[] Indices) ImportPrimitive(
             Mesh mesh, MeshPrimitive primitive, string label, List<ushort> table)
