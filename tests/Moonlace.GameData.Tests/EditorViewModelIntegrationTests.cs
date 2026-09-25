@@ -89,6 +89,29 @@ public sealed class EditorViewModelIntegrationTests : IDisposable
     }
 
     [SkippableFact]
+    public async Task TypedMaterialNameIsAppliedAsIs()
+    {
+        Skip.IfNot(TryInit());
+        var (editor, session, item) = CreateEditor("Hempen Camise");
+        await editor.SetItemAsync(item);
+
+        // What typing into the editable dropdown does, then Apply.
+        var row = editor.MeshAssignments[1];
+        row.MaterialName = "/bibo.mtrl";
+        Assert.True(row.IsCustomMaterial);
+        Assert.Equal(-1, row.SelectedMaterialIndex);
+        await editor.ApplyMeshAssignmentsCommand.ExecuteAsync(null);
+
+        Assert.Null(editor.ErrorText);
+        Assert.True(session.IsDirty);
+        // After the refresh the typed material is one of the model's own.
+        var refreshed = editor.MeshAssignments[1];
+        Assert.Equal("/bibo.mtrl", refreshed.MaterialName);
+        Assert.False(refreshed.IsCustomMaterial);
+        Assert.Contains("/bibo.mtrl", refreshed.MaterialNames);
+    }
+
+    [SkippableFact]
     public async Task TextureSlotEditCommandStoresSessionMaterial()
     {
         Skip.IfNot(TryInit());
