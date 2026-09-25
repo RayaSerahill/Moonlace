@@ -8,7 +8,11 @@ namespace Moonlace.Core.Penumbra;
 /// <summary>
 /// Live-edit link into an installed Penumbra mod folder. Understands both mod
 /// layouts: FileVersion 4 (DefaultData + Groups inline in meta.json) and the
-/// legacy FileVersion 3 (default_mod.json + group_*.json). Every mod file is
+/// legacy FileVersion 3 (default_mod.json + group_*.json). Penumbra reads a
+/// FileVersion 4+ mod from meta.json ONLY (legacy files are ignored), so the
+/// version alone picks the layout, and legacy files lying next to a v4
+/// meta.json are folded into it on link (see MigrateStrayLegacyFilesLocked).
+/// Every mod file is
 /// backed up under .moonlace-backup/ before its first edit, and the backup
 /// manifest persists on disk, so a revert is possible even after relinking.
 /// </summary>
@@ -115,12 +119,15 @@ public sealed class PenumbraLinkService : IPenumbraLinkService
         lock (_lock)
         {
             var (info, singleFile) = InspectCore(directory);
+            _backups = ModBackups.Load(info.Directory);
+            if (singleFile && MigrateStrayLegacyFilesLocked(info.Directory))
+                (info, singleFile) = InspectCore(directory);
+
             _mod = info;
             _singleFileLayout = singleFile;
             _defaultFiles = new Dictionary<string, string>(info.DefaultFiles, StringComparer.OrdinalIgnoreCase);
             _selection = NormalizeSelection(selection, info.Groups);
             _writeCounts.Clear();
-            _backups = ModBackups.Load(info.Directory);
             _generation++;
             RebuildMapLocked();
 
@@ -386,7 +393,9 @@ public sealed class PenumbraLinkService : IPenumbraLinkService
         }
 
         var name = string.IsNullOrWhiteSpace(meta.Name) ? Path.GetFileName(directory.TrimEnd('/', '\\')) : meta.Name.Trim();
-        var singleFile = meta.DefaultData is not null || meta.Groups is not null;
+        // Penumbra itself decides by FileVersion: 4+ is read from meta.json
+        // alone, even when it has no DefaultData/Groups yet (a fresh mod).
+        var singleFile = meta.FileVersion >= 4 || meta.DefaultData is not null || meta.Groups is not null;
 
         Dictionary<string, string> defaultFiles;
         List<PenumbraGroup> groups;
@@ -603,6 +612,128 @@ public sealed class PenumbraLinkService : IPenumbraLinkService
         if (ModBackups.EnsureBackedUp(_mod!.Directory, _backups, rel, target))
             _logger.LogInformation("Backed up mod file {Rel} (existed: {Existed})", rel, File.Exists(target));
     }
+
+    // --- Legacy files next to a v4 meta.json ---
+
+    /// <summary>
+    /// Folds default_mod.json and group_*.json into a FileVersion 4+
+    /// meta.json. Penumbra never reads those files for such a mod, so
+    /// anything in them (older Moonlace versions wrote default_mod.json into
+    /// fresh v4 mods) is invisible in game until it lives in meta.json.
+    /// Default redirections the meta already has win; groups whose name
+    /// already exists are kept as they are in meta.json. Every touched file
+    /// is backed up first, so Revert restores the original layout. Returns
+    /// true when anything changed.
+    /// </summary>
+    private bool MigrateStrayLegacyFilesLocked(string directory)
+    {
+        var defaultModPath = Path.Combine(directory, "default_mod.json");
+        var groupFiles = Directory.GetFiles(directory, "group_*.json")
+            .OrderBy(Path.GetFileName, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        if (!File.Exists(defaultModPath) && groupFiles.Length == 0)
+            return false;
+
+        var metaPath = Path.Combine(directory, "meta.json");
+        JsonObject root;
+        JsonObject? defaultMod = null;
+        var groups = new List<(string Path, JsonObject Group)>();
+        try
+        {
+            root = JsonNode.Parse(File.ReadAllText(metaPath), documentOptions: JsonDocumentOptionsFor())
+                as JsonObject ?? throw new PenumbraLinkException("meta.json is not a JSON object.");
+            if (File.Exists(defaultModPath))
+                defaultMod = JsonNode.Parse(File.ReadAllText(defaultModPath), documentOptions: JsonDocumentOptionsFor()) as JsonObject;
+            foreach (var groupFile in groupFiles)
+            {
+                if (JsonNode.Parse(File.ReadAllText(groupFile), documentOptions: JsonDocumentOptionsFor()) is JsonObject group)
+                    groups.Add((groupFile, group));
+            }
+        }
+        catch (JsonException ex)
+        {
+            // Leave the folder alone; the link still works on meta.json.
+            _logger.LogWarning(ex, "Legacy mod files next to a v4 meta.json could not be read; leaving them as they are");
+            return false;
+        }
+
+        ModBackups.EnsureBackedUp(directory, _backups, "meta.json", metaPath);
+
+        if (defaultMod is not null)
+        {
+            if (root["DefaultData"] is not JsonObject defaultData)
+                root["DefaultData"] = defaultData = new JsonObject();
+            MergeObject(defaultData, defaultMod, "Files");
+            MergeObject(defaultData, defaultMod, "FileSwaps");
+            if (defaultMod["Manipulations"] is JsonArray manipulations && manipulations.Count > 0)
+            {
+                if (defaultData["Manipulations"] is not JsonArray target)
+                    defaultData["Manipulations"] = target = new JsonArray();
+                foreach (var manipulation in manipulations)
+                    target.Add(manipulation?.DeepClone());
+            }
+
+            foreach (var key in (string[])["Files", "FileSwaps"])
+                defaultData[key] ??= new JsonObject();
+            defaultData["Manipulations"] ??= new JsonArray();
+        }
+
+        if (groups.Count > 0)
+        {
+            if (root["Groups"] is not JsonArray metaGroups)
+                root["Groups"] = metaGroups = new JsonArray();
+            var existing = metaGroups.OfType<JsonObject>()
+                .Select(g => g["Name"]?.GetValue<string>())
+                .Where(n => n is not null)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            foreach (var (_, group) in groups)
+            {
+                var groupName = group["Name"]?.GetValue<string>();
+                if (groupName is not null && !existing.Add(groupName))
+                    continue;
+                var copy = (JsonObject)group.DeepClone();
+                copy["Id"] ??= Guid.NewGuid().ToString();
+                metaGroups.Add(copy);
+            }
+        }
+
+        File.WriteAllText(metaPath, root.ToJsonString(WriteOptions));
+
+        // The legacy files are dead weight for Penumbra now; back them up
+        // (revert brings them back) and remove them so nothing looks like it
+        // still applies.
+        foreach (var legacy in groups.Select(g => g.Path).Prepend(defaultMod is not null ? defaultModPath : null))
+        {
+            if (legacy is null)
+                continue;
+            ModBackups.EnsureBackedUp(directory, _backups, Path.GetFileName(legacy), legacy);
+            File.Delete(legacy);
+        }
+
+        _logger.LogInformation(
+            "Moved legacy mod files into meta.json (Penumbra ignores them for FileVersion 4+): {DefaultMod} default_mod.json, {Groups} group files",
+            defaultMod is not null ? 1 : 0, groups.Count);
+        return true;
+
+        static void MergeObject(JsonObject target, JsonObject source, string key)
+        {
+            if (source[key] is not JsonObject from)
+                return;
+            if (target[key] is not JsonObject into)
+                target[key] = into = new JsonObject();
+            foreach (var (name, value) in from)
+            {
+                if (!into.ContainsKey(name))
+                    into[name] = value?.DeepClone();
+            }
+        }
+    }
+
+    private static JsonDocumentOptions JsonDocumentOptionsFor() => new()
+    {
+        AllowTrailingCommas = true,
+        CommentHandling = JsonCommentHandling.Skip,
+    };
 
     // --- New-path registration ---
 
@@ -954,6 +1085,8 @@ public sealed class PenumbraLinkService : IPenumbraLinkService
 
     private sealed class MetaJson
     {
+        public int FileVersion { get; set; }
+
         public string? Name { get; set; }
 
         public FilesContainerJson? DefaultData { get; set; }
