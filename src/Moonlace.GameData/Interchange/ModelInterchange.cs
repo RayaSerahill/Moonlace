@@ -14,11 +14,90 @@ public sealed class ModelMaterialInfo
     public byte[]? NormalPng { get; init; }
 }
 
-/// <summary>The meshes and per-mesh bone tables produced by a model import.</summary>
-public sealed record ModelImportResult(IReadOnlyList<ParsedMesh> Meshes, IReadOnlyList<ushort[]> BoneTables);
+/// <summary>
+/// The meshes and per-mesh bone tables produced by a model import.
+/// <paramref name="BoneNames"/> is the full bone list the tables index into:
+/// the template's bones first, then any bones the imported rig added.
+/// </summary>
+public sealed record ModelImportResult(
+    IReadOnlyList<ParsedMesh> Meshes, IReadOnlyList<ushort[]> BoneTables, IReadOnlyList<string> BoneNames)
+{
+    /// <summary>Bones the import added beyond the template's list (for logging and UI notes).</summary>
+    public IReadOnlyList<string> AddedBones { get; init; } = [];
+}
 
 /// <summary>A model file could not be imported; the message is user-facing.</summary>
 public sealed class ModelImportException(string message, Exception? inner = null) : Exception(message, inner);
+
+/// <summary>
+/// Maps an imported rig's bone names onto the model's bone list. Body kits
+/// ship their own armatures (extra bones, Blender duplicate suffixes, bone
+/// names with an armature prefix), so no particular naming is required:
+/// a name matching a template bone (exactly, then after cleanup,
+/// case-insensitively) reuses it; anything else is appended as a new bone.
+/// The game binds model bones to the character skeleton by name at load
+/// time, so appended bones deform when the skeleton has them. Only bones
+/// that actually carry weight are resolved, so unweighted helper bones of
+/// a kit's armature never reach the model.
+/// </summary>
+internal sealed class BoneNameResolver
+{
+    private readonly List<string> _names;
+    private readonly int _templateCount;
+    private readonly Dictionary<string, ushort> _exact = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, ushort> _cleaned = new(StringComparer.OrdinalIgnoreCase);
+
+    public BoneNameResolver(IReadOnlyList<string> templateBones)
+    {
+        _names = [.. templateBones];
+        _templateCount = _names.Count;
+        for (var i = 0; i < _names.Count; i++)
+        {
+            _exact.TryAdd(_names[i], (ushort)i);
+            _cleaned.TryAdd(Clean(_names[i]), (ushort)i);
+        }
+    }
+
+    /// <summary>The full bone list: template bones first, then the added ones.</summary>
+    public IReadOnlyList<string> BoneNames => _names;
+
+    public IReadOnlyList<string> AddedBones => _names.Skip(_templateCount).ToArray();
+
+    /// <summary>The bone-list index for an imported bone name, adding the bone when the model does not have it yet.</summary>
+    public ushort Resolve(string? rawName)
+    {
+        var name = string.IsNullOrWhiteSpace(rawName) ? "unnamed_bone" : rawName;
+        if (_exact.TryGetValue(name, out var index))
+            return index;
+
+        var cleaned = Clean(name);
+        if (!_cleaned.TryGetValue(cleaned, out index))
+        {
+            if (_names.Count >= ushort.MaxValue)
+                throw new ModelImportException("The model is weighted to more bones than the model format can store.");
+            index = (ushort)_names.Count;
+            _names.Add(cleaned);
+            _cleaned[cleaned] = index;
+        }
+
+        _exact[name] = index;
+        return index;
+    }
+
+    // "Armature|j_kosi", "Armature:j_kosi" → "j_kosi"; "j_kosi.001" → "j_kosi".
+    private static readonly Regex BlenderDuplicateSuffix = new(@"\.\d{3}$", RegexOptions.Compiled);
+
+    /// <summary>Strips armature/namespace prefixes, Blender duplicate suffixes and whitespace from a bone name.</summary>
+    public static string Clean(string name)
+    {
+        var cleaned = name.Trim();
+        var separator = cleaned.LastIndexOfAny(['|', ':']);
+        if (separator >= 0 && separator < cleaned.Length - 1)
+            cleaned = cleaned[(separator + 1)..];
+        cleaned = BlenderDuplicateSuffix.Replace(cleaned, "");
+        return cleaned.Length > 0 ? cleaned : name;
+    }
+}
 
 /// <summary>Mapping logic shared by the GLTF and FBX importers.</summary>
 internal static class ModelImportShared
