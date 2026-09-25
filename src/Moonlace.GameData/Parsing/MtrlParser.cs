@@ -61,7 +61,10 @@ public static class MtrlParser
     /// places in Dawntrail: legacy has specular strength at 3 and gloss at 7;
     /// Dawntrail rows carry the gloss (shininess) exponent at 3 and the
     /// specular strength at 7 (verified against real 7.x materials, where
-    /// slot 3 holds values like 20/32 and slot 7 sits at 1.0).
+    /// slot 3 holds values like 20/32 and slot 7 sits at 1.0). Dawntrail rows
+    /// also carry a scalar at 11 after the emissive color ("Emissive unknown"
+    /// in TexTools, field 11 in Penumbra); in legacy rows that slot is other
+    /// data and is not exposed.
     /// </summary>
     internal static (int Rows, int HalfsPerRow) TableShape(int dataSetSize) => dataSetSize switch
     {
@@ -97,6 +100,7 @@ public static class MtrlParser
                 Emissive = new Vector3(h[8], h[9], h[10]),
                 SpecularStrength = isDawntrail ? h[7] : h[3],
                 Gloss = isDawntrail ? h[3] : h[7],
+                EmissiveExtra = isDawntrail ? h[11] : 0,
             };
         }
 
@@ -134,4 +138,7 @@ public struct MaterialColorRow
     public Vector3 Emissive;
     public float SpecularStrength;
     public float Gloss;
+
+    /// <summary>Dawntrail tables only: the scalar at half 11 (Penumbra field 11). character.shpk wants 1 here.</summary>
+    public float EmissiveExtra;
 }
