@@ -128,7 +128,9 @@ public interface IPenumbraLinkService
     /// <summary>
     /// Writes edited bytes to the mod file behind a game path, backing the
     /// original up first. Paths the mod does not cover are added to the mod's
-    /// default_mod.json (that JSON is backed up too, so revert removes them).
+    /// default files: meta.json DefaultData for FileVersion 4+ mods (the only
+    /// place Penumbra reads them), default_mod.json for legacy ones. That
+    /// JSON is backed up too, so revert removes them.
     /// With an edit target set, edits are captured as that option's own files
     /// instead — the default files stay untouched.
     /// </summary>
