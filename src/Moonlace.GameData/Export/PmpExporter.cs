@@ -1,5 +1,6 @@
 using System.IO.Compression;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Moonlace.Core.Session;
 
 namespace Moonlace.GameData.Export;
@@ -20,9 +21,10 @@ public sealed class PmpExportException(string message) : Exception(message);
 /// <summary>
 /// Packages the active session's modified assets as a Penumbra Mod Package
 /// (.pmp): a zip containing meta.json, default_mod.json and the modified
-/// files, keyed by their logical game paths. Exports strictly from the
-/// session manifest — the live game files are never consulted for content,
-/// and only changed assets are included.
+/// files, keyed by their logical game paths, plus the session's metadata
+/// manipulations (e.g. EQDP entries sending a race to its base model).
+/// Exports strictly from the session manifest — the live game files are
+/// never consulted for content, and only changed assets are included.
 /// </summary>
 public static class PmpExporter
 {
@@ -46,14 +48,15 @@ public static class PmpExporter
             files[entry.GamePath] = bytes;
         }
 
-        Export(files, metadata, outputPath);
+        Export(files, metadata, outputPath, session.Manipulations);
     }
 
-    /// <summary>Packages an explicit game-path → bytes map as a .pmp (used by the mod tools).</summary>
+    /// <summary>Packages an explicit game-path → bytes map (and optional manipulations) as a .pmp.</summary>
     public static void Export(
         IReadOnlyDictionary<string, byte[]> files,
         PmpMetadata metadata,
-        string outputPath)
+        string outputPath,
+        IReadOnlyList<JsonObject>? manipulations = null)
     {
         if (files.Count == 0)
             throw new PmpExportException("There are no files to package.");
@@ -75,13 +78,17 @@ public static class PmpExporter
             gamePath => "files/" + gamePath.Replace('/', '_'),
             StringComparer.Ordinal);
 
+        var manipulationList = new JsonArray();
+        foreach (var manipulation in manipulations ?? [])
+            Moonlace.Core.Penumbra.ModManipulations.Upsert(manipulationList, manipulation);
+
         var defaultMod = new Dictionary<string, object>
         {
             ["Name"] = "",
             ["Priority"] = 0,
             ["Files"] = fileMap,
             ["FileSwaps"] = new Dictionary<string, string>(),
-            ["Manipulations"] = Array.Empty<object>(),
+            ["Manipulations"] = manipulationList,
         };
 
         // Write to a temp file first so a failed export never leaves a broken .pmp.
