@@ -113,12 +113,25 @@ public sealed class ItemEditingService
             foreach (var name in model.MaterialNames.Distinct(StringComparer.Ordinal))
             {
                 ct.ThrowIfCancellationRequested();
-                var mtrlPath = _resolver.ResolveMaterialPath(resolved, name);
-                var bytes = _assets.TryReadFile(mtrlPath);
-                if (bytes is null)
+                // Materials nobody supplies (a third-party mod's, typed into
+                // the Model tab) or that fail to parse are simply not listed;
+                // the viewport renders them white.
+                string mtrlPath;
+                ParsedMaterial parsed;
+                try
+                {
+                    mtrlPath = _resolver.ResolveMaterialPath(resolved, name);
+                    var bytes = _assets.TryReadFile(mtrlPath);
+                    if (bytes is null)
+                        continue;
+                    parsed = MtrlParser.Parse(bytes);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    _logger.LogWarning(ex, "Material {Name} could not be read; not listing it", name);
                     continue;
+                }
 
-                var parsed = MtrlParser.Parse(bytes);
                 var textures = parsed.TexturePaths
                     .Where(p => !string.IsNullOrEmpty(p))
                     .Select(texPath =>
@@ -165,43 +178,80 @@ public sealed class ItemEditingService
         }, ct);
     }
 
-    /// <summary>
-    /// Reassigns which material each mesh uses (one material index per mesh,
-    /// in mesh order) and stores the rewritten model in the session.
-    /// </summary>
+    /// <summary>Reassigns each mesh to one of the model's existing material slots and stores the model.</summary>
     public Task SetMeshMaterialsAsync(EquipmentItem item, IReadOnlyList<int> materialIndices, CancellationToken ct = default)
     {
         return Task.Run(() =>
         {
             var resolved = _resolver.Resolve(item);
             var template = ParseEffectiveModel(resolved);
-            if (materialIndices.Count != template.Meshes.Count)
-                throw new ArgumentException(
-                    $"The model has {template.Meshes.Count} meshes, {materialIndices.Count} assignments given.");
-
-            var meshes = template.Meshes
-                .Select((mesh, i) =>
-                {
-                    var materialIndex = materialIndices[i];
-                    if (materialIndex < 0 || materialIndex >= template.MaterialNames.Count)
-                        throw new ArgumentException($"Mesh {i}: material index {materialIndex} is out of range.");
-                    return new ParsedMesh
-                    {
-                        Vertices = mesh.Vertices,
-                        Indices = mesh.Indices,
-                        MaterialIndex = materialIndex,
-                        MaterialName = template.MaterialNames[materialIndex],
-                        BoneTableIndex = mesh.BoneTableIndex,
-                        Submeshes = mesh.Submeshes,
-                    };
-                })
+            var names = materialIndices
+                .Select((materialIndex, i) =>
+                    materialIndex >= 0 && materialIndex < template.MaterialNames.Count
+                        ? template.MaterialNames[materialIndex]
+                        : throw new ArgumentException($"Mesh {i}: material index {materialIndex} is out of range."))
                 .ToArray();
-
-            var written = MdlWriter.Write(template, meshes, template.BoneTables);
-            Store(resolved.MdlPath, SessionAssetKind.Model, written);
-            _logger.LogInformation("Reassigned mesh materials for {Path}: [{Assignments}]",
-                resolved.MdlPath, string.Join(", ", materialIndices));
+            WriteMeshMaterials(resolved, template, names);
         }, ct);
+    }
+
+    /// <summary>
+    /// Assigns each mesh a material by name. A name the model already has
+    /// reuses its slot; any other name (a third-party mod's material such as
+    /// "/mt_c0201b0001_bibo.mtrl", or a full game path) is added to the
+    /// model's material list as-is. Nothing checks that such a material
+    /// exists: another mod is assumed to supply it in game, and the viewport
+    /// renders it white until something does.
+    /// </summary>
+    public Task SetMeshMaterialsAsync(EquipmentItem item, IReadOnlyList<string> materialNames, CancellationToken ct = default)
+    {
+        return Task.Run(() =>
+        {
+            var resolved = _resolver.Resolve(item);
+            var template = ParseEffectiveModel(resolved);
+            WriteMeshMaterials(resolved, template, materialNames);
+        }, ct);
+    }
+
+    private void WriteMeshMaterials(ResolvedModelInfo resolved, ParsedModel template, IReadOnlyList<string> materialNames)
+    {
+        if (materialNames.Count != template.Meshes.Count)
+            throw new ArgumentException(
+                $"The model has {template.Meshes.Count} meshes, {materialNames.Count} assignments given.");
+
+        var allNames = template.MaterialNames.ToList();
+        var meshes = new ParsedMesh[template.Meshes.Count];
+        for (var i = 0; i < meshes.Length; i++)
+        {
+            var name = materialNames[i]?.Trim() ?? "";
+            if (name.Length == 0)
+                throw new ArgumentException($"Mesh {i} has no material name.");
+            if (name.Contains('\0'))
+                throw new ArgumentException($"Mesh {i}: the material name contains a null character.");
+
+            var materialIndex = allNames.IndexOf(name);
+            if (materialIndex < 0)
+            {
+                materialIndex = allNames.Count;
+                allNames.Add(name);
+            }
+
+            var mesh = template.Meshes[i];
+            meshes[i] = new ParsedMesh
+            {
+                Vertices = mesh.Vertices,
+                Indices = mesh.Indices,
+                MaterialIndex = materialIndex,
+                MaterialName = name,
+                BoneTableIndex = mesh.BoneTableIndex,
+                Submeshes = mesh.Submeshes,
+            };
+        }
+
+        var written = MdlWriter.Write(template, meshes, template.BoneTables, materialNames: allNames);
+        Store(resolved.MdlPath, SessionAssetKind.Model, written);
+        _logger.LogInformation("Reassigned mesh materials for {Path}: [{Assignments}]",
+            resolved.MdlPath, string.Join(", ", meshes.Select(m => m.MaterialName)));
     }
 
     /// <summary>
