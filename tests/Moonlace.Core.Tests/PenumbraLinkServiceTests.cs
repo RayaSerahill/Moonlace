@@ -476,4 +476,98 @@ public sealed class PenumbraLinkServiceTests : IDisposable
         link.Link(dir, []);
         Assert.Throws<PenumbraLinkException>(() => link.WriteAsset("chara/x/a.tex", [1, 2, 3]));
     }
+    /// <summary>A brand new Penumbra mod: FileVersion 4 meta.json with no DefaultData or Groups yet.</summary>
+    private string CreateFreshV4Mod(string name = "fresh")
+    {
+        var dir = Path.Combine(_root, name);
+        Directory.CreateDirectory(dir);
+        File.WriteAllText(Path.Combine(dir, "meta.json"), JsonSerializer.Serialize(new
+        {
+            FileVersion = 4,
+            Name = "Fresh Mod",
+            Author = "Unknown",
+        }));
+        return dir;
+    }
+
+    private static JsonElement ReadJson(string path) => JsonDocument.Parse(File.ReadAllText(path)).RootElement;
+
+    [Fact]
+    public void FreshV4ModGetsNewRedirectionsInMetaJson()
+    {
+        var dir = CreateFreshV4Mod();
+        var link = Create();
+        link.Link(dir, []);
+
+        link.WriteAsset("chara/equipment/e0016/model/c0101e0016_top.mdl", [1, 2, 3]);
+
+        // Penumbra reads a v4 mod from meta.json only: no default_mod.json.
+        Assert.False(File.Exists(Path.Combine(dir, "default_mod.json")));
+        var files = ReadJson(Path.Combine(dir, "meta.json")).GetProperty("DefaultData").GetProperty("Files");
+        Assert.True(files.TryGetProperty("chara/equipment/e0016/model/c0101e0016_top.mdl", out _));
+
+        // Groups authored on a fresh v4 mod land in meta.json too.
+        link.AddGroup("Colors", PenumbraGroupType.Single);
+        Assert.Empty(Directory.GetFiles(dir, "group_*.json"));
+        Assert.Equal("Colors", ReadJson(Path.Combine(dir, "meta.json")).GetProperty("Groups")[0].GetProperty("Name").GetString());
+    }
+
+    [Fact]
+    public void LegacyFilesNextToAV4MetaAreFoldedInOnLinkAndRevertRestoresThem()
+    {
+        // The state older Moonlace versions left behind: v4 meta.json plus a
+        // default_mod.json (and a group file) Penumbra never reads.
+        var dir = CreateFreshV4Mod("stray");
+        File.WriteAllBytes(Path.Combine(dir, "a.tex"), Encoding.UTF8.GetBytes("texture a"));
+        var metaBefore = File.ReadAllText(Path.Combine(dir, "meta.json"));
+        var defaultModJson = JsonSerializer.Serialize(new
+        {
+            Name = "",
+            Priority = 0,
+            FileSwaps = new Dictionary<string, string>(),
+            Manipulations = Array.Empty<object>(),
+            Files = new Dictionary<string, string> { ["chara/x/a.tex"] = "a.tex" },
+        });
+        File.WriteAllText(Path.Combine(dir, "default_mod.json"), defaultModJson);
+        File.WriteAllText(Path.Combine(dir, "group_001_extra.json"), JsonSerializer.Serialize(new
+        {
+            Name = "Extra",
+            Type = "Multi",
+            Priority = 0,
+            Options = new object[] { new { Name = "On" } },
+        }));
+
+        var link = Create();
+        link.Link(dir, []);
+
+        Assert.False(File.Exists(Path.Combine(dir, "default_mod.json")));
+        Assert.False(File.Exists(Path.Combine(dir, "group_001_extra.json")));
+        var meta = ReadJson(Path.Combine(dir, "meta.json"));
+        Assert.Equal("a.tex", meta.GetProperty("DefaultData").GetProperty("Files").GetProperty("chara/x/a.tex").GetString());
+        var group = meta.GetProperty("Groups")[0];
+        Assert.Equal("Extra", group.GetProperty("Name").GetString());
+        Assert.True(group.TryGetProperty("Id", out _));
+
+        // The link sees the folded-in redirection and group.
+        Assert.Equal("texture a", Encoding.UTF8.GetString(link.TryReadAsset("chara/x/a.tex")!));
+        Assert.Contains(link.Groups, g => g.Name == "Extra");
+
+        // Revert puts the folder back exactly as it was.
+        link.RevertAll();
+        Assert.Equal(metaBefore, File.ReadAllText(Path.Combine(dir, "meta.json")));
+        Assert.Equal(defaultModJson, File.ReadAllText(Path.Combine(dir, "default_mod.json")));
+        Assert.True(File.Exists(Path.Combine(dir, "group_001_extra.json")));
+    }
+
+    [Fact]
+    public void V3ModKeepsItsLegacyFiles()
+    {
+        var dir = CreateV3Mod();
+        var link = Create();
+        link.Link(dir, []);
+
+        Assert.True(File.Exists(Path.Combine(dir, "default_mod.json")));
+        Assert.True(File.Exists(Path.Combine(dir, "group_001_variant.json")));
+        Assert.False(ReadJson(Path.Combine(dir, "meta.json")).TryGetProperty("DefaultData", out _));
+    }
 }
