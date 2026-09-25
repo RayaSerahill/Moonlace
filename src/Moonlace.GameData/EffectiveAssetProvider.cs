@@ -1,3 +1,4 @@
+using System.Text.Json.Nodes;
 using Moonlace.Core.Penumbra;
 using Moonlace.Core.Session;
 
@@ -49,6 +50,13 @@ public sealed class EffectiveAssetProvider
     /// <summary>True when the effective asset was modified (session copy, or a live-edited mod file).</summary>
     public bool IsModified(string gamePath) =>
         _link.IsLinked ? _link.IsChanged(gamePath) : _session.GetRevision(gamePath) > 0;
+
+    /// <summary>
+    /// Metadata manipulations in effect: the linked mod's (for its selected
+    /// options) while live editing, otherwise the active session item's.
+    /// </summary>
+    public IReadOnlyList<JsonObject> ActiveManipulations =>
+        _link.IsLinked ? _link.ActiveManipulations : _session.Manipulations;
 
     /// <summary>0 for the original game asset, otherwise a non-zero revision. Useful as a cache-key component.</summary>
     public int Revision(string gamePath) =>
