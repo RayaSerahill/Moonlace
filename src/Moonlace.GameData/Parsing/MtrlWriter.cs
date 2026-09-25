@@ -46,6 +46,8 @@ public static class MtrlWriter
             WriteHalf(result, rowOffset + 20, row.Emissive.Z);
             WriteHalf(result, rowOffset + 6, isDawntrail ? row.Gloss : row.SpecularStrength);
             WriteHalf(result, rowOffset + 14, isDawntrail ? row.SpecularStrength : row.Gloss);
+            if (isDawntrail)
+                WriteHalf(result, rowOffset + 22, row.EmissiveExtra);
         }
 
         return result;
