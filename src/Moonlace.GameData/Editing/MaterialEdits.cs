@@ -83,16 +83,50 @@ public static class MaterialEdits
     }
 
     /// <summary>
-    /// Switches the material's shader pack. Only the name changes: the color
-    /// table, keys, constants and samplers stay as they are, so the user
-    /// decides whether they fit the new shader.
+    /// Switches the material's shader pack. Keys, constants, samplers and
+    /// textures stay as they are, so the user decides whether they fit the
+    /// new shader. One conversion is known to need more: characterlegacy →
+    /// character renders the mesh pitch black unless every color table row
+    /// has field 3 = 1, field 7 = 0 and field 11 = 1 (xivmodding.com
+    /// "Updating a mod to DT shaders"; TexTools calls them the diffuse,
+    /// specular and emissive "unknown" values), so that switch sets them.
     /// </summary>
     public static byte[] SetShader(byte[] mtrl, string shaderPack)
     {
         var doc = MtrlDocument.Parse(mtrl);
+        if (doc.ShaderPack == "characterlegacy.shpk" && shaderPack == "character.shpk")
+            ApplyCharacterShaderRowFields(doc);
         doc.ShaderPack = shaderPack;
         return doc.Write();
     }
+
+    /// <summary>Rows × bytes of a Dawntrail color table (32 rows of 32 halfs); legacy 16-row tables are left alone.</summary>
+    private const int DawntrailRows = 32;
+
+    private const int DawntrailRowBytes = 64;
+
+    /// <summary>
+    /// Sets field 3 = 1, field 7 = 0 and field 11 = 1 on every row of a
+    /// Dawntrail color table, what character.shpk needs to not render black.
+    /// Returns false (and changes nothing) for materials without one.
+    /// </summary>
+    public static bool ApplyCharacterShaderRowFields(MtrlDocument doc)
+    {
+        if (doc.DataSet.Length < DawntrailRows * DawntrailRowBytes)
+            return false;
+        for (var row = 0; row < DawntrailRows; row++)
+        {
+            var at = row * DawntrailRowBytes;
+            WriteHalf(doc.DataSet, at + 3 * 2, 1f);
+            WriteHalf(doc.DataSet, at + 7 * 2, 0f);
+            WriteHalf(doc.DataSet, at + 11 * 2, 1f);
+        }
+
+        return true;
+    }
+
+    private static void WriteHalf(byte[] buffer, int offset, float value) =>
+        System.Buffers.Binary.BinaryPrimitives.WriteHalfLittleEndian(buffer.AsSpan(offset), (Half)value);
 
     /// <summary>
     /// A sensible path for a new diffuse texture: the normal map's path with
