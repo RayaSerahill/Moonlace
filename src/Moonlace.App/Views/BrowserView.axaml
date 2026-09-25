@@ -169,6 +169,9 @@
                                                 </SplitButton.Flyout>
                                             </SplitButton>
                                         </StackPanel>
+                                        <TextBlock Classes="dim" FontSize="12" TextWrapping="Wrap"
+                                                   Text="{Binding Editor.ImportNoticeText}"
+                                                   IsVisible="{Binding Editor.ImportNoticeText, Converter={x:Static ObjectConverters.IsNotNull}}" />
 
                                         <Rectangle Height="1" Fill="{StaticResource MoonBorderBrush}" Margin="0,4" />
 
