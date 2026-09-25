@@ -24,6 +24,9 @@ public partial class MaterialViewModel : ViewModelBase
 
     public bool HasColorTable => Rows.Count > 0;
 
+    /// <summary>character.shpk shows a hint about fields 3/7/11, which it needs set or it renders black.</summary>
+    public bool IsCharacterShader => ShaderPack == "character.shpk";
+
     [ObservableProperty]
     private bool _modified;
 
@@ -61,7 +64,7 @@ public partial class MaterialViewModel : ViewModelBase
         _newDiffusePath = material.SuggestedDiffusePath;
         Modified = material.Modified;
         for (var i = 0; i < material.ColorTable.Length; i++)
-            Rows.Add(new ColorRowViewModel(i, material.ColorTable[i]));
+            Rows.Add(new ColorRowViewModel(i, material.ColorTable[i], material.ColorTable.Length == 32));
         SelectedRow = Rows.FirstOrDefault();
         for (var i = 0; i < material.Textures.Count; i++)
             TextureSlots.Add(new TextureSlotViewModel(i, material.Textures[i]));
@@ -201,15 +204,24 @@ public partial class ColorRowViewModel : ViewModelBase
     [ObservableProperty]
     private float _specularStrength;
 
+    /// <summary>Field 11 (Dawntrail tables only); character.shpk wants 1 here.</summary>
+    [ObservableProperty]
+    private float _emissiveExtra;
+
+    /// <summary>True for 32-row Dawntrail tables, which have field 11.</summary>
+    public bool IsDawntrailRow { get; }
+
     public Avalonia.Media.Color Swatch => Avalonia.Media.Color.FromRgb(
         ToChannel(DiffuseR), ToChannel(DiffuseG), ToChannel(DiffuseB));
 
     private static byte ToChannel(float value) =>
         (byte)System.Math.Clamp(System.MathF.Round(System.MathF.Pow(System.Math.Clamp(value, 0f, 1f), 1f / 2.2f) * 255f), 0, 255);
 
-    public ColorRowViewModel(int index, MaterialColorRow row)
+    public ColorRowViewModel(int index, MaterialColorRow row, bool isDawntrailRow)
     {
         Index = index;
+        IsDawntrailRow = isDawntrailRow;
+        _emissiveExtra = row.EmissiveExtra;
         _diffuseR = row.Diffuse.X;
         _diffuseG = row.Diffuse.Y;
         _diffuseB = row.Diffuse.Z;
@@ -230,6 +242,7 @@ public partial class ColorRowViewModel : ViewModelBase
         Emissive = new Vector3(EmissiveR, EmissiveG, EmissiveB),
         Gloss = Gloss,
         SpecularStrength = SpecularStrength,
+        EmissiveExtra = EmissiveExtra,
     };
 }
 
