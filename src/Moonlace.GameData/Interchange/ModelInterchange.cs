@@ -103,35 +103,26 @@ internal sealed class BoneNameResolver
 internal static class ModelImportShared
 {
     /// <summary>
-    /// Maps an incoming mesh onto a template material slot by material name.
-    /// Without a name match, a mesh whose name carried an FFXIV mesh number
-    /// keeps that template mesh's material; otherwise mesh order is used when
-    /// unambiguous.
+    /// The template mesh an imported mesh group replaces: the one its name
+    /// numbers ("chest 0.0" is mesh 0), otherwise the one at the same
+    /// position, otherwise the first.
     /// </summary>
-    public static int ResolveMaterialIndex(
-        string? materialName, int meshIndex, int meshCount, ParsedModel template, string label,
-        int? templateMaterialIndex = null)
+    public static ParsedMesh TemplateMeshFor(ParsedModel template, int? meshNumber, int groupIndex)
     {
-        if (!string.IsNullOrEmpty(materialName))
-        {
-            for (var i = 0; i < template.MaterialNames.Count; i++)
-            {
-                if (string.Equals(template.MaterialNames[i], materialName, StringComparison.Ordinal))
-                    return i;
-            }
-        }
-
-        if (templateMaterialIndex is { } tmi && tmi >= 0 && tmi < template.MaterialNames.Count)
-            return tmi;
-
-        // No name match: fall back to order only when it is unambiguous.
-        if (meshCount <= template.MaterialNames.Count)
-            return Math.Min(meshIndex, template.MaterialNames.Count - 1);
-
-        throw new ModelImportException(
-            $"Cannot map \"{label}\" to an FFXIV material. Name the materials after the original ones " +
-            $"({string.Join(", ", template.MaterialNames)}) — the exported model already does this.");
+        if (meshNumber is { } n && n < template.Meshes.Count)
+            return template.Meshes[n];
+        return groupIndex < template.Meshes.Count ? template.Meshes[groupIndex] : template.Meshes[0];
     }
+
+    /// <summary>
+    /// The material slot for an imported mesh: always the replaced template
+    /// mesh's own. Material assignments inside the imported file are
+    /// ignored on purpose; which material a mesh really gets is decided by
+    /// the model's own material list and Penumbra's material mapping, not by
+    /// whatever the modeling tool named its materials.
+    /// </summary>
+    public static int MaterialIndexFor(ParsedModel template, ParsedMesh templateMesh)
+        => Math.Clamp(templateMesh.MaterialIndex, 0, Math.Max(template.MaterialNames.Count - 1, 0));
 
     /// <summary>Adds a bone to a per-mesh bone table, enforcing the format's 64-entry limit.</summary>
     public static void EnsureInTable(List<ushort> boneTable, ushort boneIndex, string label)
