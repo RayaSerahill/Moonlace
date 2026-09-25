@@ -115,6 +115,63 @@ public sealed class MaterialSlotEditingTests : IDisposable
         Assert.Equal(before.Samplers.Select(s => (s.SamplerId, s.TextureIndex)), after.Samplers.Select(s => (s.SamplerId, s.TextureIndex)));
     }
 
+    // A game-shipped characterlegacy material with a 32-row Dawntrail table and dye block.
+    private const string LegacyMtrl = "chara/equipment/e0016/material/v0012/mt_c0201e0016_top_a.mtrl";
+
+    [SkippableFact]
+    public void LegacyToCharacterSetsTheRowFieldsThatKeepItFromRenderingBlack()
+    {
+        Skip.IfNot(TryInit());
+        var original = _service.Lumina.GetFile(LegacyMtrl)?.Data;
+        Skip.If(original is null, "test material missing");
+        var before = MtrlDocument.Parse(original!);
+        Assert.Equal("characterlegacy.shpk", before.ShaderPack);
+        Assert.True(before.DataSet.Length >= 2048);
+
+        var switched = MaterialEdits.SetShader(original!, "character.shpk");
+
+        var rows = MtrlParser.Parse(switched).ColorTable;
+        Assert.Equal(32, rows.Count);
+        Assert.All(rows, row =>
+        {
+            Assert.Equal(1f, row.Gloss);            // field 3
+            Assert.Equal(0f, row.SpecularStrength); // field 7
+            Assert.Equal(1f, row.EmissiveExtra);    // field 11
+        });
+
+        // Only those three halfs per row changed; colors and the dye block did not.
+        var after = MtrlDocument.Parse(switched);
+        Assert.Equal("character.shpk", after.ShaderPack);
+        for (var i = 0; i < before.DataSet.Length; i++)
+        {
+            var inTable = i < 2048;
+            var half = inTable ? (i % 64) / 2 : -1;
+            if (half is 3 or 7 or 11)
+                continue;
+            Assert.True(before.DataSet[i] == after.DataSet[i], $"data set byte {i} changed");
+        }
+
+        Assert.Equal(before.ShaderKeys, after.ShaderKeys);
+    }
+
+    [SkippableFact]
+    public void Field11RoundTripsThroughTheColorTableEditor()
+    {
+        Skip.IfNot(TryInit());
+        var original = _service.Lumina.GetFile(LegacyMtrl)?.Data;
+        Skip.If(original is null, "test material missing");
+
+        var rows = MtrlParser.Parse(original!).ColorTable.ToArray();
+        rows[0].EmissiveExtra = 0.5f;
+        rows[5].EmissiveExtra = 1f;
+        var patched = MtrlWriter.PatchColorTable(original!, rows);
+
+        var reread = MtrlParser.Parse(patched).ColorTable;
+        Assert.Equal(0.5f, reread[0].EmissiveExtra);
+        Assert.Equal(1f, reread[5].EmissiveExtra);
+        Assert.Equal(rows[1].EmissiveExtra, reread[1].EmissiveExtra);
+    }
+
     [SkippableFact]
     public async Task AddedDiffuseTakesAnImportedImageAndReachesTheViewport()
     {
