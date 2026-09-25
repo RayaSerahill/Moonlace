@@ -242,13 +242,16 @@
                                                                         Command="{Binding ApplyShaderCommand}" />
                                                             </Grid>
                                                             <TextBlock Classes="dim" FontSize="11" TextWrapping="Wrap"
-                                                                       Text="Only the shader name changes; the color table, keys and textures stay as they are." />
+                                                                       Text="Only the shader name changes; keys and textures stay as they are. characterlegacy → character also sets fields 3, 7 and 11 on every color table row so the model does not render black." />
                                                         </StackPanel>
 
                                                         <Rectangle Height="1" Fill="{StaticResource MoonBorderBrush}" Margin="0,2" />
 
                                                         <StackPanel Spacing="6" IsVisible="{Binding HasColorTable}">
                                                             <TextBlock Text="Color table" FontWeight="SemiBold" FontSize="13" />
+                                                            <TextBlock Classes="dim" FontSize="11" TextWrapping="Wrap"
+                                                                       IsVisible="{Binding IsCharacterShader}"
+                                                                       Text="character.shpk renders black unless fields 3 and 11 are 1 and field 7 is 0 on the rows in use. Switching from characterlegacy sets this on every row." />
                                                             <Grid ColumnDefinitions="120,*">
                                                                 <ListBox Grid.Column="0" Height="190"
                                                                          ItemsSource="{Binding Rows}" SelectedItem="{Binding SelectedRow}">
@@ -284,11 +287,15 @@
                                                                         <TextBox Grid.Row="2" Grid.Column="2" Text="{Binding EmissiveG}" FontSize="12" />
                                                                         <TextBox Grid.Row="2" Grid.Column="3" Text="{Binding EmissiveB}" FontSize="12" />
                                                                     </Grid>
-                                                                    <Grid ColumnDefinitions="64,*,84,*" ColumnSpacing="5">
-                                                                        <TextBlock Grid.Column="0" Classes="dim" Text="Gloss" FontSize="12" VerticalAlignment="Center" />
-                                                                        <TextBox Grid.Column="1" Text="{Binding Gloss}" FontSize="12" />
-                                                                        <TextBlock Grid.Column="2" Classes="dim" Text="Spec str." FontSize="12" VerticalAlignment="Center" Margin="6,0,0,0" />
-                                                                        <TextBox Grid.Column="3" Text="{Binding SpecularStrength}" FontSize="12" />
+                                                                    <Grid ColumnDefinitions="110,*" RowDefinitions="Auto,Auto,Auto" ColumnSpacing="5" RowSpacing="4">
+                                                                        <TextBlock Grid.Row="0" Grid.Column="0" Classes="dim" Text="Field 3 (gloss)" FontSize="12" VerticalAlignment="Center" />
+                                                                        <TextBox Grid.Row="0" Grid.Column="1" Text="{Binding Gloss}" FontSize="12" />
+                                                                        <TextBlock Grid.Row="1" Grid.Column="0" Classes="dim" Text="Field 7 (spec str.)" FontSize="12" VerticalAlignment="Center" />
+                                                                        <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding SpecularStrength}" FontSize="12" />
+                                                                        <TextBlock Grid.Row="2" Grid.Column="0" Classes="dim" Text="Field 11" FontSize="12" VerticalAlignment="Center"
+                                                                                   IsVisible="{Binding IsDawntrailRow}" />
+                                                                        <TextBox Grid.Row="2" Grid.Column="1" Text="{Binding EmissiveExtra}" FontSize="12"
+                                                                                 IsVisible="{Binding IsDawntrailRow}" />
                                                                     </Grid>
                                                                 </StackPanel>
                                                             </Grid>
