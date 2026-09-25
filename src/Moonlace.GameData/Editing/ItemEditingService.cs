@@ -561,7 +561,11 @@ public sealed class ItemEditingService
         }, ct);
     }
 
-    /// <summary>Imports an image file as the session replacement for a texture.</summary>
+    /// <summary>
+    /// Imports an image file as the replacement for a texture. Any size and
+    /// aspect ratio is accepted: the user may be remapping UVs or knowingly
+    /// swapping in a different layout.
+    /// </summary>
     public Task ImportTextureAsync(string texPath, string imagePath, CancellationToken ct = default)
     {
         return Task.Run(() =>
@@ -569,19 +573,6 @@ public sealed class ItemEditingService
             var (width, height, rgba) = ImageIo.DecodeImageFile(imagePath);
             if (width <= 0 || height <= 0)
                 throw new InvalidDataException("The image is empty.");
-
-            // Guard against accidental wrong-file imports: FFXIV UVs assume the
-            // original aspect ratio. Resolution itself may differ.
-            var original = _textures.Decode(texPath);
-            if (original is not null && original.Width > 0 && original.Height > 0)
-            {
-                var originalAspect = (double)original.Width / original.Height;
-                var importedAspect = (double)width / height;
-                if (Math.Abs(originalAspect - importedAspect) / originalAspect > 0.01)
-                    throw new InvalidDataException(
-                        $"The image is {width}x{height}, but this texture is {original.Width}x{original.Height} " +
-                        $"— the aspect ratio must match or the texture will appear distorted.");
-            }
 
             var tex = TexWriter.Write(width, height, rgba);
             Store(texPath, SessionAssetKind.Texture, tex);
