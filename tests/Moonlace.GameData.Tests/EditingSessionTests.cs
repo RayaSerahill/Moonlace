@@ -225,11 +225,23 @@ public sealed class EditingSessionTests : IDisposable
         Assert.NotNull(diffuse);
         Assert.Equal(texture.Width, diffuse.Width);
 
-        // Wrong aspect ratio is rejected with a readable error.
-        var wrong = Path.Combine(_tempRoot, "wrong.png");
-        await File.WriteAllBytesAsync(wrong, Interchange.ImageIo.EncodePng(10, 3, new byte[10 * 3 * 4]));
-        var ex = await Assert.ThrowsAsync<InvalidDataException>(() => editing.ImportTextureAsync(texture.GamePath, wrong));
-        Assert.Contains("aspect ratio", ex.Message);
+        // A different aspect ratio is the user's call: it imports as-is.
+        var wide = Path.Combine(_tempRoot, "wide.png");
+        await File.WriteAllBytesAsync(wide, Interchange.ImageIo.EncodePng(64, 16, new byte[64 * 16 * 4]));
+        await editing.ImportTextureAsync(texture.GamePath, wide);
+        var reloaded = await builder.LoadAsync(item);
+        var wideDiffuse = reloaded.Meshes.Select(m => m.Material.Diffuse).First(t => t?.Key == texture.GamePath);
+        Assert.Equal(64, wideDiffuse!.Width);
+        Assert.Equal(16, wideDiffuse.Height);
+
+        // Odd, non-power-of-two sizes too.
+        var odd = Path.Combine(_tempRoot, "odd.png");
+        await File.WriteAllBytesAsync(odd, Interchange.ImageIo.EncodePng(10, 3, new byte[10 * 3 * 4]));
+        await editing.ImportTextureAsync(texture.GamePath, odd);
+        var oddModel = await builder.LoadAsync(item);
+        var oddDiffuse = oddModel.Meshes.Select(m => m.Material.Diffuse).First(t => t?.Key == texture.GamePath);
+        Assert.Equal(10, oddDiffuse!.Width);
+        Assert.Equal(3, oddDiffuse.Height);
     }
 
     [SkippableFact]
