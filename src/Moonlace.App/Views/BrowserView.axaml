@@ -139,7 +139,7 @@
                                         </StackPanel>
 
                                         <TextBlock Classes="dim" FontSize="12" TextWrapping="Wrap"
-                                                   Text="Export the model as GLTF or FBX to edit its meshes in Blender, then import the result. Keep the material names and vertex groups that come with the export." />
+                                                   Text="Export the model as GLTF or FBX to edit its meshes in Blender, then import the result. Any rig and any material names work: new bones are added, and each mesh keeps the material chosen below." />
                                         <StackPanel Orientation="Horizontal" Spacing="8">
                                             <SplitButton Content="Export GLTF…"
                                                          Command="{Binding Editor.ExportModelCommand}"
@@ -174,17 +174,23 @@
 
                                         <TextBlock Text="Mesh groups" FontWeight="SemiBold" FontSize="13" />
                                         <TextBlock Classes="dim" FontSize="12" TextWrapping="Wrap"
-                                                   Text="Each mesh group can use any of the model's materials." />
+                                                   Text="Each mesh group can use any of the model's materials, or type any material path another mod provides (e.g. /bibo.mtrl). Typed paths are written as-is; the preview shows white until something supplies them." />
                                         <ItemsControl ItemsSource="{Binding Editor.MeshAssignments}">
                                             <ItemsControl.ItemTemplate>
                                                 <DataTemplate x:DataType="vm:MeshAssignmentViewModel">
                                                     <Grid ColumnDefinitions="130,*" Margin="0,3">
                                                         <TextBlock Grid.Column="0" Classes="dim" FontSize="12"
                                                                    Text="{Binding Label}" VerticalAlignment="Center" />
-                                                        <ComboBox Grid.Column="1" FontSize="12"
-                                                                  ItemsSource="{Binding MaterialNames}"
-                                                                  SelectedIndex="{Binding SelectedMaterialIndex}"
-                                                                  HorizontalAlignment="Stretch" />
+                                                        <StackPanel Grid.Column="1" Spacing="2">
+                                                            <ComboBox FontSize="12" IsEditable="True"
+                                                                      ItemsSource="{Binding MaterialNames}"
+                                                                      Text="{Binding MaterialName, Mode=TwoWay}"
+                                                                      PlaceholderText="/mt_….mtrl"
+                                                                      HorizontalAlignment="Stretch" />
+                                                            <TextBlock Classes="dim" FontSize="11"
+                                                                       IsVisible="{Binding IsCustomMaterial}"
+                                                                       Text="Custom material, added to the model on apply" />
+                                                        </StackPanel>
                                                     </Grid>
                                                 </DataTemplate>
                                             </ItemsControl.ItemTemplate>
