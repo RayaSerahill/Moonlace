@@ -37,6 +37,7 @@ public sealed class PenumbraLinkService : IPenumbraLinkService
     private List<int[]> _selection = [];
     private Dictionary<string, string> _defaultFiles = new(StringComparer.OrdinalIgnoreCase);
     private Dictionary<string, string> _fileMap = new(StringComparer.OrdinalIgnoreCase);
+    private IReadOnlyList<JsonObject> _activeManipulations = [];
     private readonly Dictionary<string, int> _writeCounts = new(StringComparer.OrdinalIgnoreCase);
     private List<ModBackupEntry> _backups = [];
     private int _generation;
@@ -177,6 +178,7 @@ public sealed class PenumbraLinkService : IPenumbraLinkService
             _selection = [];
             _defaultFiles = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             _fileMap = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            _activeManipulations = [];
             _writeCounts.Clear();
             _backups = [];
             _editTarget = null;
@@ -398,10 +400,12 @@ public sealed class PenumbraLinkService : IPenumbraLinkService
         var singleFile = meta.FileVersion >= 4 || meta.DefaultData is not null || meta.Groups is not null;
 
         Dictionary<string, string> defaultFiles;
+        List<JsonObject> defaultManipulations = [];
         List<PenumbraGroup> groups;
         if (singleFile)
         {
             defaultFiles = NormalizeFiles(meta.DefaultData?.Files);
+            defaultManipulations = meta.DefaultData?.Manipulations ?? [];
             groups = ParseGroups(meta.Groups, "meta.json");
         }
         else
@@ -414,6 +418,7 @@ public sealed class PenumbraLinkService : IPenumbraLinkService
                 {
                     var defaultMod = JsonSerializer.Deserialize<FilesContainerJson>(File.ReadAllText(defaultModPath), ReadOptions);
                     defaultFiles = NormalizeFiles(defaultMod?.Files);
+                    defaultManipulations = defaultMod?.Manipulations ?? [];
                 }
                 catch (JsonException ex)
                 {
@@ -447,6 +452,7 @@ public sealed class PenumbraLinkService : IPenumbraLinkService
             Directory = Path.TrimEndingDirectorySeparator(Path.GetFullPath(directory)),
             Name = name,
             DefaultFiles = defaultFiles,
+            DefaultManipulations = defaultManipulations,
             Groups = groups,
         };
         return (info, singleFile);
@@ -478,6 +484,7 @@ public sealed class PenumbraLinkService : IPenumbraLinkService
                     Name = o.Name ?? "(unnamed option)",
                     Priority = o.Priority,
                     Files = NormalizeFiles(o.Files),
+                    Manipulations = o.Manipulations ?? [],
                 })
                 .ToArray();
 
@@ -573,6 +580,90 @@ public sealed class PenumbraLinkService : IPenumbraLinkService
         }
 
         _fileMap = map;
+
+        // Manipulations follow the same layering; a later one targeting the
+        // same entry replaces the earlier.
+        var manipulations = new JsonArray();
+        foreach (var manipulation in _mod?.DefaultManipulations ?? [])
+            ModManipulations.Upsert(manipulations, manipulation);
+        foreach (var layer in layers
+                     .OrderBy(l => l.GroupPriority)
+                     .ThenBy(l => l.OptionPriority)
+                     .ThenBy(l => l.GroupIndex)
+                     .ThenBy(l => l.OptionIndex))
+        {
+            foreach (var manipulation in layer.Option.Manipulations)
+                ModManipulations.Upsert(manipulations, manipulation);
+        }
+
+        _activeManipulations = manipulations.OfType<JsonObject>().ToArray();
+    }
+
+    public IReadOnlyList<JsonObject> ActiveManipulations
+    {
+        get
+        {
+            lock (_lock)
+                return _activeManipulations.Select(m => (JsonObject)m.DeepClone()).ToArray();
+        }
+    }
+
+    public void SetManipulation(JsonObject manipulation)
+    {
+        lock (_lock)
+        {
+            RequireLinkedLocked();
+
+            JsonObject root;
+            string path;
+            JsonObject container;
+            if (_editTarget is { } target)
+            {
+                var found = FindOptionLocked(target.Group, target.Option)
+                    ?? throw new PenumbraLinkException($"Option “{target.Group} / {target.Option}” no longer exists.");
+                JsonObject optionParent;
+                if (_singleFileLayout)
+                {
+                    (root, path) = LoadModJsonLocked("meta.json");
+                    optionParent = FindGroupNode(root, found.Group.Name);
+                }
+                else
+                {
+                    (root, path) = LoadModJsonLocked(found.Group.SourceFile
+                        ?? throw new PenumbraLinkException($"Group “{found.Group.Name}” has no source file."));
+                    optionParent = root;
+                }
+
+                container = FindOptionNode(optionParent, found.Option.Name);
+            }
+            else if (_singleFileLayout)
+            {
+                (root, path) = LoadModJsonLocked("meta.json");
+                if (root["DefaultData"] is not JsonObject defaultData)
+                    root["DefaultData"] = defaultData = new JsonObject();
+                container = defaultData;
+            }
+            else
+            {
+                (root, path) = LoadModJsonLocked("default_mod.json");
+                root["Name"] ??= "";
+                root["Priority"] ??= 0;
+                root["Files"] ??= new JsonObject();
+                root["FileSwaps"] ??= new JsonObject();
+                container = root;
+            }
+
+            if (container["Manipulations"] is not JsonArray list)
+                container["Manipulations"] = list = new JsonArray();
+            ModManipulations.Upsert(list, manipulation);
+            SaveModJson(path, root);
+
+            ReloadModLocked();
+            _logger.LogInformation("Set manipulation {Key} in {Json}",
+                ModManipulations.IdentityKey(manipulation), Path.GetFileName(path));
+        }
+
+        LinkChanged?.Invoke();
     }
 
     private static List<int[]> NormalizeSelection(
@@ -1097,6 +1188,8 @@ public sealed class PenumbraLinkService : IPenumbraLinkService
     private sealed class FilesContainerJson
     {
         public Dictionary<string, string>? Files { get; set; }
+
+        public List<JsonObject>? Manipulations { get; set; }
     }
 
     private sealed class GroupJson
@@ -1119,5 +1212,7 @@ public sealed class PenumbraLinkService : IPenumbraLinkService
         public int Priority { get; set; }
 
         public Dictionary<string, string>? Files { get; set; }
+
+        public List<JsonObject>? Manipulations { get; set; }
     }
 }
