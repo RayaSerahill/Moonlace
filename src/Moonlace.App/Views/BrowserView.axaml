@@ -207,7 +207,7 @@
 
                             <!-- ── MATERIAL TAB ── -->
                             <TabItem Header="Material" FontSize="13">
-                                <Grid RowDefinitions="Auto,*" Margin="4,4">
+                                <Grid RowDefinitions="Auto,Auto,Auto,Auto,*" Margin="4,4">
                                     <ListBox Grid.Row="0" MaxHeight="110" Margin="0,0,0,6"
                                              ItemsSource="{Binding Editor.Materials}"
                                              SelectedItem="{Binding Editor.SelectedMaterial}">
@@ -225,7 +225,43 @@
                                         </ListBox.ItemTemplate>
                                     </ListBox>
 
-                                    <ContentControl Grid.Row="1" Content="{Binding Editor.SelectedMaterial}">
+                                    <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="6">
+                                        <Button Content="New material…" FontSize="12"
+                                                ToolTip.Tip="Create a copy of the selected material under a new name"
+                                                Command="{Binding Editor.OpenNewMaterialCommand}"
+                                                IsEnabled="{Binding Editor.SelectedMaterial, Converter={x:Static ObjectConverters.IsNotNull}}" />
+                                        <Button Content="Delete material" FontSize="12"
+                                                ToolTip.Tip="Remove the selected material from the model"
+                                                Command="{Binding Editor.RequestDeleteMaterialCommand}"
+                                                IsEnabled="{Binding Editor.SelectedMaterial, Converter={x:Static ObjectConverters.IsNotNull}}" />
+                                    </StackPanel>
+
+                                    <StackPanel Grid.Row="2" Spacing="6" Margin="0,6,0,0">
+                                        <StackPanel Spacing="6" IsVisible="{Binding Editor.IsCreatingMaterial}">
+                                            <TextBlock Classes="dim" FontSize="12" TextWrapping="Wrap"
+                                                       Text="The new material starts as a copy of the selected one and is added to the model's material list. Assign meshes to it in the Model tab." />
+                                            <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="6">
+                                                <TextBox Grid.Column="0" FontSize="12" Text="{Binding Editor.NewMaterialName}" />
+                                                <Button Grid.Column="1" Classes="primary" Content="Create" FontSize="12"
+                                                        Command="{Binding Editor.CreateMaterialCommand}" />
+                                                <Button Grid.Column="2" Content="Cancel" FontSize="12"
+                                                        Command="{Binding Editor.CancelNewMaterialCommand}" />
+                                            </Grid>
+                                        </StackPanel>
+                                        <StackPanel Spacing="6" IsVisible="{Binding Editor.IsConfirmingMaterialDelete}">
+                                            <TextBlock FontSize="12" TextWrapping="Wrap" Text="{Binding Editor.DeleteMaterialQuestion}" />
+                                            <StackPanel Orientation="Horizontal" Spacing="6">
+                                                <Button Classes="primary" Content="Remove" FontSize="12"
+                                                        Command="{Binding Editor.ConfirmDeleteMaterialCommand}" />
+                                                <Button Content="Cancel" FontSize="12"
+                                                        Command="{Binding Editor.CancelDeleteMaterialCommand}" />
+                                            </StackPanel>
+                                        </StackPanel>
+                                    </StackPanel>
+
+                                    <Rectangle Grid.Row="3" Height="1" Fill="{StaticResource MoonBorderBrush}" Margin="0,8,0,4" />
+
+                                    <ContentControl Grid.Row="4" Content="{Binding Editor.SelectedMaterial}">
                                         <ContentControl.ContentTemplate>
                                             <DataTemplate x:DataType="vm:MaterialViewModel">
                                                 <ScrollViewer>
