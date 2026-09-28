@@ -277,6 +277,139 @@ public sealed class ItemEditingService
     }
 
     /// <summary>
+    /// Creates a new material for the item: a copy of <paramref name="sourceName"/>
+    /// (a material the model already lists) stored under <paramref name="newName"/>
+    /// in the item's current material set, and added to the model's material
+    /// list so meshes can be assigned to it. No mesh uses it yet.
+    /// </summary>
+    public Task CreateMaterialAsync(EquipmentItem item, string newName, string sourceName, CancellationToken ct = default)
+    {
+        return Task.Run(() =>
+        {
+            var resolved = _resolver.Resolve(item);
+            var template = ParseEffectiveModel(resolved);
+
+            newName = NormalizeMaterialName(newName);
+            if (template.MaterialNames.Contains(newName, StringComparer.Ordinal))
+                throw new ArgumentException($"The model already has a material named {newName}.");
+            if (!template.MaterialNames.Contains(sourceName, StringComparer.Ordinal))
+                throw new ArgumentException($"{sourceName} is not one of this model's materials.");
+
+            var sourcePath = _resolver.ResolveMaterialPath(resolved, sourceName);
+            var bytes = _assets.TryReadFile(sourcePath)
+                ?? throw new InvalidDataException($"The material to copy could not be read: {sourcePath}");
+            var newPath = _resolver.ResolveMaterialPath(resolved, newName);
+
+            var names = template.MaterialNames.Append(newName).ToArray();
+            var written = MdlWriter.Write(template, template.Meshes, template.BoneTables, materialNames: names);
+            if (!MdlParser.Parse(written).MaterialNames.SequenceEqual(names, StringComparer.Ordinal))
+                throw new InvalidDataException("Internal error: the rewritten model failed verification.");
+
+            Store(newPath, SessionAssetKind.Material, bytes);
+            Store(resolved.MdlPath, SessionAssetKind.Model, written);
+            _logger.LogInformation("Created material {Name} ({Path}) as a copy of {Source}", newName, newPath, sourceName);
+        }, ct);
+    }
+
+    /// <summary>
+    /// Removes a material from the model's material list. Meshes that used it
+    /// move to the first remaining material. The .mtrl file itself is left
+    /// alone (nothing references it any more). Returns how many meshes moved.
+    /// </summary>
+    public Task<int> DeleteMaterialAsync(EquipmentItem item, string name, CancellationToken ct = default)
+    {
+        return Task.Run(() =>
+        {
+            var resolved = _resolver.Resolve(item);
+            var template = ParseEffectiveModel(resolved);
+
+            var names = template.MaterialNames.ToList();
+            var removedIndex = names.IndexOf(name);
+            if (removedIndex < 0)
+                throw new ArgumentException($"{name} is not one of this model's materials.");
+            if (names.Count == 1)
+                throw new InvalidOperationException("A model needs at least one material; this is the last one.");
+            names.RemoveAt(removedIndex);
+
+            var moved = 0;
+            var meshes = template.Meshes.Select(mesh =>
+            {
+                var index = mesh.MaterialIndex;
+                if (index == removedIndex)
+                {
+                    index = 0;
+                    moved++;
+                }
+                else if (index > removedIndex)
+                {
+                    index--;
+                }
+
+                return new ParsedMesh
+                {
+                    Vertices = mesh.Vertices,
+                    Indices = mesh.Indices,
+                    MaterialIndex = index,
+                    MaterialName = names[index],
+                    BoneTableIndex = mesh.BoneTableIndex,
+                    Submeshes = mesh.Submeshes,
+                };
+            }).ToArray();
+
+            var written = MdlWriter.Write(template, meshes, template.BoneTables, materialNames: names);
+            if (!MdlParser.Parse(written).MaterialNames.SequenceEqual(names, StringComparer.Ordinal))
+                throw new InvalidDataException("Internal error: the rewritten model failed verification.");
+
+            Store(resolved.MdlPath, SessionAssetKind.Model, written);
+            _logger.LogInformation("Removed material {Name} from {Path} ({Moved} meshes moved to {First})",
+                name, resolved.MdlPath, moved, names[0]);
+            return moved;
+        }, ct);
+    }
+
+    /// <summary>"mt_x_b" or "/mt_x_b.mtrl" → "/mt_x_b.mtrl": model material names are "/"-prefixed file names.</summary>
+    public static string NormalizeMaterialName(string name)
+    {
+        name = name.Trim().Replace('\\', '/');
+        if (name.Length == 0)
+            throw new ArgumentException("Enter a name for the new material.");
+        if (name.Contains('\0'))
+            throw new ArgumentException("The material name contains a null character.");
+        if (!name.EndsWith(".mtrl", StringComparison.OrdinalIgnoreCase))
+            name += ".mtrl";
+        if (!name.StartsWith('/') && !name.Contains('/'))
+            name = "/" + name;
+        return name;
+    }
+
+    /// <summary>
+    /// A free material name next to <paramref name="baseName"/>: its trailing
+    /// letter bumped ("/mt_c0101e6100_top_a.mtrl" → "_b", "_c", ...) past
+    /// every name the model already has, else "_new" variants.
+    /// </summary>
+    public static string SuggestMaterialName(string baseName, IReadOnlyCollection<string> existing)
+    {
+        var match = System.Text.RegularExpressions.Regex.Match(baseName, @"^(.*_)([a-z])\.mtrl$");
+        if (match.Success)
+        {
+            for (var letter = (char)(match.Groups[2].Value[0] + 1); letter <= 'z'; letter++)
+            {
+                var candidate = $"{match.Groups[1].Value}{letter}.mtrl";
+                if (!existing.Contains(candidate))
+                    return candidate;
+            }
+        }
+
+        var stem = baseName.EndsWith(".mtrl", StringComparison.OrdinalIgnoreCase) ? baseName[..^5] : baseName;
+        for (var n = 1; ; n++)
+        {
+            var candidate = n == 1 ? $"{stem}_new.mtrl" : $"{stem}_new{n}.mtrl";
+            if (!existing.Contains(candidate))
+                return candidate;
+        }
+    }
+
+    /// <summary>
     /// Replaces the texture paths a material references (one per existing
     /// slot, in order) and stores the rewritten material in the session.
     /// Every new path must resolve to an existing texture.
