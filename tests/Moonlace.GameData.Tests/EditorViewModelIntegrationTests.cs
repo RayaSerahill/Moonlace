@@ -112,6 +112,38 @@ public sealed class EditorViewModelIntegrationTests : IDisposable
     }
 
     [SkippableFact]
+    public async Task MaterialTabCreatesAndDeletesMaterials()
+    {
+        Skip.IfNot(TryInit());
+        var (editor, session, item) = CreateEditor("Hempen Camise");
+        await editor.SetItemAsync(item);
+        var before = editor.Materials.Select(m => m.Name).ToArray();
+        editor.SelectedMaterial = editor.Materials[0];
+
+        // New material: prefilled name, created as a copy, then selected.
+        editor.OpenNewMaterialCommand.Execute(null);
+        Assert.True(editor.IsCreatingMaterial);
+        var name = editor.NewMaterialName;
+        Assert.DoesNotContain(name, before);
+        await editor.CreateMaterialCommand.ExecuteAsync(null);
+        Assert.Null(editor.ErrorText);
+        Assert.False(editor.IsCreatingMaterial);
+        Assert.Contains(editor.Materials, m => m.Name == name);
+        Assert.Equal(name, editor.SelectedMaterial?.Name);
+        Assert.Contains(name, editor.MeshAssignments[0].MaterialNames);
+
+        // Delete it again after confirming.
+        editor.RequestDeleteMaterialCommand.Execute(null);
+        Assert.True(editor.IsConfirmingMaterialDelete);
+        Assert.Contains(name, editor.DeleteMaterialQuestion);
+        await editor.ConfirmDeleteMaterialCommand.ExecuteAsync(null);
+        Assert.Null(editor.ErrorText);
+        Assert.DoesNotContain(editor.Materials, m => m.Name == name);
+        Assert.Equal(before, editor.Materials.Select(m => m.Name));
+        Assert.True(session.IsDirty);
+    }
+
+    [SkippableFact]
     public async Task TextureSlotEditCommandStoresSessionMaterial()
     {
         Skip.IfNot(TryInit());
