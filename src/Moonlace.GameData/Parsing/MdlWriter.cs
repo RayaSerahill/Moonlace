@@ -32,8 +32,10 @@ public static class MdlWriter
     /// Null keeps the template's list.
     /// </param>
     /// <param name="materialNames">
-    /// The full material list mesh material indices point into, following
-    /// the same rule: the template's materials first, extras appended.
+    /// The full material list mesh material indices point into, in any order
+    /// and length (materials may be added or removed). Names the template
+    /// already has reuse their string; new ones are appended. Null keeps the
+    /// template's list.
     /// </param>
     public static byte[] Write(
         ParsedModel template, IReadOnlyList<ParsedMesh> meshes, IReadOnlyList<ushort[]> boneTables,
@@ -200,8 +202,9 @@ public static class MdlWriter
     }
 
     /// <summary>
-    /// The string table plus material- and bone-name offsets, with any names
-    /// beyond the template's own lists appended. New names go right after
+    /// The string table plus material- and bone-name offsets: the material
+    /// list may be any list (names the template has reuse their strings), the
+    /// bone list must start with the template's bones. New names are appended. New names go right after
     /// the existing strings (kept byte for byte, minus trailing padding),
     /// padded back to 4-byte alignment.
     /// </summary>
@@ -210,12 +213,19 @@ public static class MdlWriter
         IReadOnlyList<string> templateMaterials, IReadOnlyList<string>? materialNames,
         IReadOnlyList<string> templateBones, IReadOnlyList<string>? boneNames)
     {
-        var newMaterials = ExtraNames(templateMaterials, materialNames, "material", nameof(materialNames));
+        // Materials: a template name reuses its offset, anything else is new.
+        var existingMaterialOffset = new Dictionary<string, uint>(StringComparer.Ordinal);
+        for (var i = 0; i < templateMaterials.Count && i < edit.MaterialNameOffsets.Length; i++)
+            existingMaterialOffset.TryAdd(templateMaterials[i], edit.MaterialNameOffsets[i]);
+        var materialList = materialNames ?? templateMaterials;
+        if (materialList.Count > ushort.MaxValue)
+            throw new ArgumentException("Too many materials for the MDL format.", nameof(materialNames));
+        var newMaterials = materialList.Where(n => !existingMaterialOffset.ContainsKey(n)).Distinct(StringComparer.Ordinal).ToArray();
+
         var newBones = ExtraNames(templateBones, boneNames, "bone", nameof(boneNames));
-        if (newMaterials.Count == 0 && newBones.Count == 0)
-            return (edit.StringsRaw, edit.StringCount, edit.MaterialNameOffsets, edit.BoneNameOffsets);
-        if (edit.StringCount + newMaterials.Count + newBones.Count > ushort.MaxValue
-            || templateMaterials.Count + newMaterials.Count > ushort.MaxValue
+        if (newMaterials.Length == 0 && newBones.Count == 0)
+            return (edit.StringsRaw, edit.StringCount, materialList.Select(n => existingMaterialOffset[n]).ToArray(), edit.BoneNameOffsets);
+        if (edit.StringCount + newMaterials.Length + newBones.Count > ushort.MaxValue
             || templateBones.Count + newBones.Count > ushort.MaxValue)
             throw new ArgumentException("Too many names for the MDL format.");
 
@@ -232,17 +242,17 @@ public static class MdlWriter
 
         var strings = new MemoryStream();
         strings.Write(edit.StringsRaw, 0, kept);
-        var materialOffsets = new List<uint>(edit.MaterialNameOffsets);
         var boneOffsets = new List<uint>(edit.BoneNameOffsets);
         foreach (var name in newMaterials)
-            materialOffsets.Add(AppendString(strings, name));
+            existingMaterialOffset[name] = AppendString(strings, name);
+        var materialOffsets = materialList.Select(n => existingMaterialOffset[n]).ToList();
         foreach (var name in newBones)
             boneOffsets.Add(AppendString(strings, name));
 
         while (strings.Position % 4 != 0)
             strings.WriteByte(0);
 
-        var added = newMaterials.Count + newBones.Count;
+        var added = newMaterials.Length + newBones.Count;
         return (strings.ToArray(), (ushort)(edit.StringCount + added), [.. materialOffsets], [.. boneOffsets]);
     }
 
