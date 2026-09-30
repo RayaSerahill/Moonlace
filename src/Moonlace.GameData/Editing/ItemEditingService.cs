@@ -1,8 +1,11 @@
+using System.Text.Json.Nodes;
+using System.Text.RegularExpressions;
 using Microsoft.Extensions.Logging;
 using Moonlace.Core.Models;
 using Moonlace.Core.Session;
 using Moonlace.GameData.Export;
 using Moonlace.GameData.Interchange;
+using Moonlace.GameData.Meta;
 using Moonlace.GameData.Parsing;
 using Moonlace.GameData.Resolution;
 
@@ -34,6 +37,12 @@ public sealed class EditableMaterial
     public required MaterialColorRow[] ColorTable { get; init; }
 
     public required IReadOnlyList<EditableTexture> Textures { get; init; }
+
+    /// <summary>True when a texture is bound through the diffuse sampler (g_SamplerDiffuse).</summary>
+    public bool HasDiffuseSlot { get; init; }
+
+    /// <summary>Where a new diffuse texture would go by default (see <see cref="MaterialEdits.SuggestDiffusePath"/>).</summary>
+    public string SuggestedDiffusePath { get; init; } = "";
 }
 
 public sealed class EditableMesh
@@ -101,6 +110,15 @@ public sealed class ItemEditingService
             _session.StoreAsset(gamePath, kind, data);
     }
 
+    /// <summary>Adds a metadata manipulation where edits go: the linked mod, or the active session item.</summary>
+    private void StoreManipulation(JsonObject manipulation)
+    {
+        if (_link.IsLinked)
+            _link.SetManipulation(manipulation);
+        else
+            _session.StoreManipulation(manipulation);
+    }
+
     /// <summary>Everything the Material/Texture tabs show for an item, using effective assets.</summary>
     public Task<EditableItemInfo> GetItemInfoAsync(EquipmentItem item, CancellationToken ct = default)
     {
@@ -113,12 +131,27 @@ public sealed class ItemEditingService
             foreach (var name in model.MaterialNames.Distinct(StringComparer.Ordinal))
             {
                 ct.ThrowIfCancellationRequested();
-                var mtrlPath = _resolver.ResolveMaterialPath(resolved, name);
-                var bytes = _assets.TryReadFile(mtrlPath);
-                if (bytes is null)
+                // Materials nobody supplies (a third-party mod's, typed into
+                // the Model tab) or that fail to parse are simply not listed;
+                // the viewport renders them white.
+                string mtrlPath;
+                ParsedMaterial parsed;
+                bool hasDiffuseSlot;
+                try
+                {
+                    mtrlPath = _resolver.ResolveMaterialPath(resolved, name);
+                    var bytes = _assets.TryReadFile(mtrlPath);
+                    if (bytes is null)
+                        continue;
+                    parsed = MtrlParser.Parse(bytes);
+                    hasDiffuseSlot = MaterialEdits.HasDiffuseSlot(MtrlDocument.Parse(bytes));
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    _logger.LogWarning(ex, "Material {Name} could not be read; not listing it", name);
                     continue;
+                }
 
-                var parsed = MtrlParser.Parse(bytes);
                 var textures = parsed.TexturePaths
                     .Where(p => !string.IsNullOrEmpty(p))
                     .Select(texPath =>
@@ -143,6 +176,8 @@ public sealed class ItemEditingService
                     Modified = _assets.IsModified(mtrlPath),
                     ColorTable = [.. parsed.ColorTable],
                     Textures = textures,
+                    HasDiffuseSlot = hasDiffuseSlot,
+                    SuggestedDiffusePath = MaterialEdits.SuggestDiffusePath(parsed.TexturePaths, mtrlPath),
                 });
             }
 
@@ -165,43 +200,213 @@ public sealed class ItemEditingService
         }, ct);
     }
 
-    /// <summary>
-    /// Reassigns which material each mesh uses (one material index per mesh,
-    /// in mesh order) and stores the rewritten model in the session.
-    /// </summary>
+    /// <summary>Reassigns each mesh to one of the model's existing material slots and stores the model.</summary>
     public Task SetMeshMaterialsAsync(EquipmentItem item, IReadOnlyList<int> materialIndices, CancellationToken ct = default)
     {
         return Task.Run(() =>
         {
             var resolved = _resolver.Resolve(item);
             var template = ParseEffectiveModel(resolved);
-            if (materialIndices.Count != template.Meshes.Count)
-                throw new ArgumentException(
-                    $"The model has {template.Meshes.Count} meshes, {materialIndices.Count} assignments given.");
-
-            var meshes = template.Meshes
-                .Select((mesh, i) =>
-                {
-                    var materialIndex = materialIndices[i];
-                    if (materialIndex < 0 || materialIndex >= template.MaterialNames.Count)
-                        throw new ArgumentException($"Mesh {i}: material index {materialIndex} is out of range.");
-                    return new ParsedMesh
-                    {
-                        Vertices = mesh.Vertices,
-                        Indices = mesh.Indices,
-                        MaterialIndex = materialIndex,
-                        MaterialName = template.MaterialNames[materialIndex],
-                        BoneTableIndex = mesh.BoneTableIndex,
-                        Submeshes = mesh.Submeshes,
-                    };
-                })
+            var names = materialIndices
+                .Select((materialIndex, i) =>
+                    materialIndex >= 0 && materialIndex < template.MaterialNames.Count
+                        ? template.MaterialNames[materialIndex]
+                        : throw new ArgumentException($"Mesh {i}: material index {materialIndex} is out of range."))
                 .ToArray();
-
-            var written = MdlWriter.Write(template, meshes, template.BoneTables);
-            Store(resolved.MdlPath, SessionAssetKind.Model, written);
-            _logger.LogInformation("Reassigned mesh materials for {Path}: [{Assignments}]",
-                resolved.MdlPath, string.Join(", ", materialIndices));
+            WriteMeshMaterials(resolved, template, names);
         }, ct);
+    }
+
+    /// <summary>
+    /// Assigns each mesh a material by name. A name the model already has
+    /// reuses its slot; any other name (a third-party mod's material such as
+    /// "/mt_c0201b0001_bibo.mtrl", or a full game path) is added to the
+    /// model's material list as-is. Nothing checks that such a material
+    /// exists: another mod is assumed to supply it in game, and the viewport
+    /// renders it white until something does.
+    /// </summary>
+    public Task SetMeshMaterialsAsync(EquipmentItem item, IReadOnlyList<string> materialNames, CancellationToken ct = default)
+    {
+        return Task.Run(() =>
+        {
+            var resolved = _resolver.Resolve(item);
+            var template = ParseEffectiveModel(resolved);
+            WriteMeshMaterials(resolved, template, materialNames);
+        }, ct);
+    }
+
+    private void WriteMeshMaterials(ResolvedModelInfo resolved, ParsedModel template, IReadOnlyList<string> materialNames)
+    {
+        if (materialNames.Count != template.Meshes.Count)
+            throw new ArgumentException(
+                $"The model has {template.Meshes.Count} meshes, {materialNames.Count} assignments given.");
+
+        var allNames = template.MaterialNames.ToList();
+        var meshes = new ParsedMesh[template.Meshes.Count];
+        for (var i = 0; i < meshes.Length; i++)
+        {
+            var name = materialNames[i]?.Trim() ?? "";
+            if (name.Length == 0)
+                throw new ArgumentException($"Mesh {i} has no material name.");
+            if (name.Contains('\0'))
+                throw new ArgumentException($"Mesh {i}: the material name contains a null character.");
+
+            var materialIndex = allNames.IndexOf(name);
+            if (materialIndex < 0)
+            {
+                materialIndex = allNames.Count;
+                allNames.Add(name);
+            }
+
+            var mesh = template.Meshes[i];
+            meshes[i] = new ParsedMesh
+            {
+                Vertices = mesh.Vertices,
+                Indices = mesh.Indices,
+                MaterialIndex = materialIndex,
+                MaterialName = name,
+                BoneTableIndex = mesh.BoneTableIndex,
+                Submeshes = mesh.Submeshes,
+            };
+        }
+
+        var written = MdlWriter.Write(template, meshes, template.BoneTables, materialNames: allNames);
+        Store(resolved.MdlPath, SessionAssetKind.Model, written);
+        _logger.LogInformation("Reassigned mesh materials for {Path}: [{Assignments}]",
+            resolved.MdlPath, string.Join(", ", meshes.Select(m => m.MaterialName)));
+    }
+
+    /// <summary>
+    /// Creates a new material for the item: a copy of <paramref name="sourceName"/>
+    /// (a material the model already lists) stored under <paramref name="newName"/>
+    /// in the item's current material set, and added to the model's material
+    /// list so meshes can be assigned to it. No mesh uses it yet.
+    /// </summary>
+    public Task CreateMaterialAsync(EquipmentItem item, string newName, string sourceName, CancellationToken ct = default)
+    {
+        return Task.Run(() =>
+        {
+            var resolved = _resolver.Resolve(item);
+            var template = ParseEffectiveModel(resolved);
+
+            newName = NormalizeMaterialName(newName);
+            if (template.MaterialNames.Contains(newName, StringComparer.Ordinal))
+                throw new ArgumentException($"The model already has a material named {newName}.");
+            if (!template.MaterialNames.Contains(sourceName, StringComparer.Ordinal))
+                throw new ArgumentException($"{sourceName} is not one of this model's materials.");
+
+            var sourcePath = _resolver.ResolveMaterialPath(resolved, sourceName);
+            var bytes = _assets.TryReadFile(sourcePath)
+                ?? throw new InvalidDataException($"The material to copy could not be read: {sourcePath}");
+            var newPath = _resolver.ResolveMaterialPath(resolved, newName);
+
+            var names = template.MaterialNames.Append(newName).ToArray();
+            var written = MdlWriter.Write(template, template.Meshes, template.BoneTables, materialNames: names);
+            if (!MdlParser.Parse(written).MaterialNames.SequenceEqual(names, StringComparer.Ordinal))
+                throw new InvalidDataException("Internal error: the rewritten model failed verification.");
+
+            Store(newPath, SessionAssetKind.Material, bytes);
+            Store(resolved.MdlPath, SessionAssetKind.Model, written);
+            _logger.LogInformation("Created material {Name} ({Path}) as a copy of {Source}", newName, newPath, sourceName);
+        }, ct);
+    }
+
+    /// <summary>
+    /// Removes a material from the model's material list. Meshes that used it
+    /// move to the first remaining material. The .mtrl file itself is left
+    /// alone (nothing references it any more). Returns how many meshes moved.
+    /// </summary>
+    public Task<int> DeleteMaterialAsync(EquipmentItem item, string name, CancellationToken ct = default)
+    {
+        return Task.Run(() =>
+        {
+            var resolved = _resolver.Resolve(item);
+            var template = ParseEffectiveModel(resolved);
+
+            var names = template.MaterialNames.ToList();
+            var removedIndex = names.IndexOf(name);
+            if (removedIndex < 0)
+                throw new ArgumentException($"{name} is not one of this model's materials.");
+            if (names.Count == 1)
+                throw new InvalidOperationException("A model needs at least one material; this is the last one.");
+            names.RemoveAt(removedIndex);
+
+            var moved = 0;
+            var meshes = template.Meshes.Select(mesh =>
+            {
+                var index = mesh.MaterialIndex;
+                if (index == removedIndex)
+                {
+                    index = 0;
+                    moved++;
+                }
+                else if (index > removedIndex)
+                {
+                    index--;
+                }
+
+                return new ParsedMesh
+                {
+                    Vertices = mesh.Vertices,
+                    Indices = mesh.Indices,
+                    MaterialIndex = index,
+                    MaterialName = names[index],
+                    BoneTableIndex = mesh.BoneTableIndex,
+                    Submeshes = mesh.Submeshes,
+                };
+            }).ToArray();
+
+            var written = MdlWriter.Write(template, meshes, template.BoneTables, materialNames: names);
+            if (!MdlParser.Parse(written).MaterialNames.SequenceEqual(names, StringComparer.Ordinal))
+                throw new InvalidDataException("Internal error: the rewritten model failed verification.");
+
+            Store(resolved.MdlPath, SessionAssetKind.Model, written);
+            _logger.LogInformation("Removed material {Name} from {Path} ({Moved} meshes moved to {First})",
+                name, resolved.MdlPath, moved, names[0]);
+            return moved;
+        }, ct);
+    }
+
+    /// <summary>"mt_x_b" or "/mt_x_b.mtrl" → "/mt_x_b.mtrl": model material names are "/"-prefixed file names.</summary>
+    public static string NormalizeMaterialName(string name)
+    {
+        name = name.Trim().Replace('\\', '/');
+        if (name.Length == 0)
+            throw new ArgumentException("Enter a name for the new material.");
+        if (name.Contains('\0'))
+            throw new ArgumentException("The material name contains a null character.");
+        if (!name.EndsWith(".mtrl", StringComparison.OrdinalIgnoreCase))
+            name += ".mtrl";
+        if (!name.StartsWith('/') && !name.Contains('/'))
+            name = "/" + name;
+        return name;
+    }
+
+    /// <summary>
+    /// A free material name next to <paramref name="baseName"/>: its trailing
+    /// letter bumped ("/mt_c0101e6100_top_a.mtrl" → "_b", "_c", ...) past
+    /// every name the model already has, else "_new" variants.
+    /// </summary>
+    public static string SuggestMaterialName(string baseName, IReadOnlyCollection<string> existing)
+    {
+        var match = System.Text.RegularExpressions.Regex.Match(baseName, @"^(.*_)([a-z])\.mtrl$");
+        if (match.Success)
+        {
+            for (var letter = (char)(match.Groups[2].Value[0] + 1); letter <= 'z'; letter++)
+            {
+                var candidate = $"{match.Groups[1].Value}{letter}.mtrl";
+                if (!existing.Contains(candidate))
+                    return candidate;
+            }
+        }
+
+        var stem = baseName.EndsWith(".mtrl", StringComparison.OrdinalIgnoreCase) ? baseName[..^5] : baseName;
+        for (var n = 1; ; n++)
+        {
+            var candidate = n == 1 ? $"{stem}_new.mtrl" : $"{stem}_new{n}.mtrl";
+            if (!existing.Contains(candidate))
+                return candidate;
+        }
     }
 
     /// <summary>
@@ -232,6 +437,55 @@ public sealed class ItemEditingService
             Store(mtrlPath, SessionAssetKind.Material, rewritten);
             _logger.LogInformation("Reassigned textures for {Path}: {Textures}",
                 mtrlPath, string.Join(", ", texturePaths));
+        }, ct);
+    }
+
+    /// <summary>
+    /// Adds a diffuse texture slot to a material (see
+    /// <see cref="MaterialEdits.AddDiffuseSlot"/>). The texture may not exist
+    /// yet; it shows up in the Texture tab to import an image into.
+    /// </summary>
+    public Task AddDiffuseSlotAsync(string mtrlPath, string texturePath, CancellationToken ct = default)
+    {
+        return Task.Run(() =>
+        {
+            texturePath = texturePath.Trim().Replace('\\', '/');
+            if (texturePath.Length == 0)
+                throw new ArgumentException("Enter a path for the diffuse texture.");
+            if (!texturePath.EndsWith(".tex", StringComparison.OrdinalIgnoreCase))
+                throw new ArgumentException("The diffuse texture path must end in .tex.");
+
+            var bytes = _assets.TryReadFile(mtrlPath)
+                ?? throw new InvalidDataException($"Material could not be read: {mtrlPath}");
+            var rewritten = MaterialEdits.AddDiffuseSlot(bytes, texturePath);
+
+            // Self-check before storing: both readers must see the new slot.
+            if (!MaterialEdits.HasDiffuseSlot(MtrlDocument.Parse(rewritten))
+                || !MtrlParser.Parse(rewritten).TexturePaths.Contains(texturePath))
+                throw new InvalidDataException("Internal error: the rewritten material failed verification.");
+
+            Store(mtrlPath, SessionAssetKind.Material, rewritten);
+            _logger.LogInformation("Added diffuse slot {Texture} to {Path}", texturePath, mtrlPath);
+        }, ct);
+    }
+
+    /// <summary>Switches a material's shader pack (name only; see <see cref="MaterialEdits.SetShader"/>).</summary>
+    public Task SetMaterialShaderAsync(string mtrlPath, string shaderPack, CancellationToken ct = default)
+    {
+        return Task.Run(() =>
+        {
+            shaderPack = shaderPack.Trim();
+            if (shaderPack.Length == 0)
+                throw new ArgumentException("Enter a shader pack name, e.g. character.shpk.");
+
+            var bytes = _assets.TryReadFile(mtrlPath)
+                ?? throw new InvalidDataException($"Material could not be read: {mtrlPath}");
+            var rewritten = MaterialEdits.SetShader(bytes, shaderPack);
+            if (MtrlParser.Parse(rewritten).ShaderPack != shaderPack)
+                throw new InvalidDataException("Internal error: the rewritten material failed verification.");
+
+            Store(mtrlPath, SessionAssetKind.Material, rewritten);
+            _logger.LogInformation("Switched {Path} to shader {Shader}", mtrlPath, shaderPack);
         }, ct);
     }
 
@@ -399,29 +653,93 @@ public sealed class ItemEditingService
         }, ct);
     }
 
-    /// <summary>Imports a GLTF/GLB or FBX (picked by extension) as the session replacement for the item's model and stores it in the session.</summary>
-    public Task ImportModelAsync(EquipmentItem item, string modelPath, CancellationToken ct = default)
+    /// <summary>
+    /// Imports a GLTF/GLB or FBX (picked by extension) as the replacement for
+    /// the item's model and stores it (session, or the linked mod).
+    ///
+    /// Body kits are built on the base bodies (Midlander ♀ for every female
+    /// race, Midlander ♂ for male ones) and the game reshapes a base model for
+    /// the other races at runtime, but only when that race has no model of
+    /// its own. So an import onto any other race's version is stored at its
+    /// base race's path, and an EQDP manipulation turns the selected race's
+    /// own model off (and the base race's on, should the item lack one), the
+    /// way TexTools/Penumbra mods cover every race from one base model.
+    /// Returns a user-facing note when that redirect happened.
+    /// </summary>
+    public Task<string?> ImportModelAsync(EquipmentItem item, string modelPath, CancellationToken ct = default)
     {
         return Task.Run(() =>
         {
             var resolved = _resolver.Resolve(item);
-            var template = ParseEffectiveModel(resolved);
+            var targetPath = resolved.MdlPath;
+            string? note = null;
+            var manipulations = new List<JsonObject>();
 
+            var selectedRace = SelectedRace(item, resolved);
+            if (selectedRace is not null && AssetPathResolver.GenderBaseRace(selectedRace) is var baseRace
+                && baseRace != selectedRace)
+            {
+                targetPath = _resolver.GetEquipmentModelPath(item, baseRace);
+                // Template: the base model when there is one (its materials
+                // and attributes are what the game pairs with it), else the
+                // model the selected version shows now.
+                if (_assets.FileExists(targetPath))
+                    resolved = _resolver.ResolveForRace(item, baseRace);
+
+                if (((_resolver.EffectiveEqdpBits(item, selectedRace) ?? 0) & 2) != 0)
+                    manipulations.Add(EqdpManipulation(item, selectedRace, (_resolver.VanillaEqdpBits(item, selectedRace) ?? 0) & 1));
+                if (((_resolver.EffectiveEqdpBits(item, baseRace) ?? 0) & 2) == 0)
+                    manipulations.Add(EqdpManipulation(item, baseRace, ((_resolver.VanillaEqdpBits(item, baseRace) ?? 0) & 1) | 2));
+
+                note = $"Imported onto the {RaceLabel(baseRace)} base model; {RaceLabel(selectedRace)} now uses it " +
+                       "and the game reshapes it for that race.";
+            }
+
+            var template = ParseEffectiveModel(resolved);
             var import = IsFbxPath(modelPath)
                 ? FbxImporter.Import(modelPath, template)
                 : GltfImporter.Import(modelPath, template);
-            var written = MdlWriter.Write(template, import.Meshes, import.BoneTables);
+            var written = MdlWriter.Write(template, import.Meshes, import.BoneTables, import.BoneNames);
 
             // Sanity: our own parser must accept what we are about to store.
             var check = MdlParser.Parse(written);
-            if (check.Meshes.Count != import.Meshes.Count)
+            if (check.Meshes.Count != import.Meshes.Count || check.BoneNames.Count != import.BoneNames.Count)
                 throw new ModelImportException("Internal error: the rebuilt model failed verification.");
 
-            Store(resolved.MdlPath, SessionAssetKind.Model, written);
-            _logger.LogInformation("Imported {Model} as session model for {Path} ({Meshes} meshes)",
-                modelPath, resolved.MdlPath, import.Meshes.Count);
+            if (import.AddedBones.Count > 0)
+                _logger.LogInformation("Import added {Count} bones the original model did not use: {Bones}",
+                    import.AddedBones.Count, string.Join(", ", import.AddedBones));
+
+            Store(targetPath, SessionAssetKind.Model, written);
+            foreach (var manipulation in manipulations)
+                StoreManipulation(manipulation);
+            _logger.LogInformation("Imported {Model} as the model for {Path} ({Meshes} meshes, {Manipulations} EQDP changes)",
+                modelPath, targetPath, import.Meshes.Count, manipulations.Count);
+            return note;
         }, ct);
     }
+
+    private static readonly Regex EquipmentRaceCode = new(@"/c(\d{4})[ea]\d{4}_[a-z]{3}\.mdl$", RegexOptions.Compiled);
+
+    /// <summary>The race version being edited: the selector's choice, else the race code in the resolved model path.</summary>
+    private string? SelectedRace(EquipmentItem item, ResolvedModelInfo resolved)
+    {
+        if (item.IsWeapon || item.IsBodyPart || !AssetPathResolver.TryEqdpSlot(item, out _))
+            return null;
+        if (_resolver.PreferredRaceCode is { } preferred)
+            return preferred;
+        var match = EquipmentRaceCode.Match(resolved.MdlPath);
+        return match.Success ? match.Groups[1].Value : null;
+    }
+
+    private static JsonObject EqdpManipulation(EquipmentItem item, string raceCode, int bits)
+    {
+        AssetPathResolver.TryEqdpSlot(item, out var slot);
+        return EqdpTable.Manipulation(raceCode, (ushort)item.ModelId, slot, bits);
+    }
+
+    private static string RaceLabel(string raceCode) =>
+        AssetPathResolver.KnownRaces.FirstOrDefault(r => r.Code == raceCode)?.Label ?? $"c{raceCode}";
 
     /// <summary>Exports the effective texture as PNG. Does not touch session state.</summary>
     public Task ExportTexturePngAsync(string texPath, string outputPath, CancellationToken ct = default)
@@ -435,7 +753,11 @@ public sealed class ItemEditingService
         }, ct);
     }
 
-    /// <summary>Imports an image file as the session replacement for a texture.</summary>
+    /// <summary>
+    /// Imports an image file as the replacement for a texture. Any size and
+    /// aspect ratio is accepted: the user may be remapping UVs or knowingly
+    /// swapping in a different layout.
+    /// </summary>
     public Task ImportTextureAsync(string texPath, string imagePath, CancellationToken ct = default)
     {
         return Task.Run(() =>
@@ -443,19 +765,6 @@ public sealed class ItemEditingService
             var (width, height, rgba) = ImageIo.DecodeImageFile(imagePath);
             if (width <= 0 || height <= 0)
                 throw new InvalidDataException("The image is empty.");
-
-            // Guard against accidental wrong-file imports: FFXIV UVs assume the
-            // original aspect ratio. Resolution itself may differ.
-            var original = _textures.Decode(texPath);
-            if (original is not null && original.Width > 0 && original.Height > 0)
-            {
-                var originalAspect = (double)original.Width / original.Height;
-                var importedAspect = (double)width / height;
-                if (Math.Abs(originalAspect - importedAspect) / originalAspect > 0.01)
-                    throw new InvalidDataException(
-                        $"The image is {width}x{height}, but this texture is {original.Width}x{original.Height} " +
-                        $"— the aspect ratio must match or the texture will appear distorted.");
-            }
 
             var tex = TexWriter.Write(width, height, rgba);
             Store(texPath, SessionAssetKind.Texture, tex);

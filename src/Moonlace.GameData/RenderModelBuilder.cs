@@ -102,9 +102,12 @@ public sealed class RenderModelBuilder : IRenderModelLoader
 
     private RenderMaterial LoadMaterial(ResolvedModelInfo model, string materialName)
     {
-        var mtrlPath = _resolver.ResolveMaterialPath(model, materialName);
+        var mtrlPath = materialName;
         try
         {
+            // Anything can be typed as a mesh material (a third-party mod's
+            // material); whatever cannot be found or read renders white.
+            mtrlPath = _resolver.ResolveMaterialPath(model, materialName);
             var data = _assets.TryReadFile(mtrlPath);
             if (data is null)
             {

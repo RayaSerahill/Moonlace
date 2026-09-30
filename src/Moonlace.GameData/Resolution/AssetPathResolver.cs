@@ -1,6 +1,7 @@
 using Lumina.Data.Files;
 using Microsoft.Extensions.Logging;
 using Moonlace.Core.Models;
+using Moonlace.GameData.Meta;
 
 namespace Moonlace.GameData.Resolution;
 
@@ -14,6 +15,7 @@ public sealed partial class AssetPathResolver
     private readonly LuminaGameDataService _gameData;
     private readonly EffectiveAssetProvider _assets;
     private readonly ILogger<AssetPathResolver> _logger;
+    private readonly EqdpTable _eqdp;
 
     /// <summary>
     /// Race/gender model codes for equipment, in probe order. c0101
@@ -63,6 +65,60 @@ public sealed partial class AssetPathResolver
         _gameData = gameData;
         _assets = assets;
         _logger = logger;
+        _eqdp = new EqdpTable(gameData);
+    }
+
+    /// <summary>
+    /// The races whose models the game tries for <paramref name="raceCode"/>,
+    /// in order: the race itself, its gender's base race (Midlander ♀ for
+    /// female races), then Midlander ♂.
+    /// </summary>
+    internal static IReadOnlyList<string> ModelFallbackChain(string raceCode) =>
+        new[] { raceCode, GenderBaseRace(raceCode), "0101" }.Distinct().ToArray();
+
+    /// <summary>
+    /// True when an active manipulation (session or linked mod) turns this
+    /// race's own model off for the item, so the game falls back to its base
+    /// race's model. Vanilla EQDP alone never hides a model file that exists,
+    /// so versions created as edits keep showing.
+    /// </summary>
+    public bool IsModelDisabled(EquipmentItem item, string raceCode)
+    {
+        if (item.IsWeapon || item.IsBodyPart || !TryEqdpSlot(item, out var slot))
+            return false;
+        var entry = EqdpTable.FindManipulation(raceCode, (ushort)item.ModelId, slot, _assets.ActiveManipulations);
+        return entry is { } e && ((e >> PenumbraMeta.EqdpOffset(slot)!.Value) & 2) == 0;
+    }
+
+    /// <summary>The race whose model the game really shows for <paramref name="raceCode"/>, following the fallback chain.</summary>
+    public string EffectiveModelRace(EquipmentItem item, string raceCode)
+    {
+        foreach (var race in ModelFallbackChain(raceCode))
+        {
+            if (!IsModelDisabled(item, race) && _assets.FileExists(GetEquipmentModelPath(item, race)))
+                return race;
+        }
+
+        return raceCode;
+    }
+
+    /// <summary>The game's own 2-bit EQDP value (bit 0 material, bit 1 model) for this item and race, or null.</summary>
+    public int? VanillaEqdpBits(EquipmentItem item, string raceCode) =>
+        TryEqdpSlot(item, out var slot) ? _eqdp.VanillaBits(raceCode, (ushort)item.ModelId, slot, item.IsAccessory) : null;
+
+    /// <summary>The effective 2-bit EQDP value, manipulations applied, or null.</summary>
+    public int? EffectiveEqdpBits(EquipmentItem item, string raceCode) =>
+        TryEqdpSlot(item, out var slot)
+            ? _eqdp.EffectiveBits(raceCode, (ushort)item.ModelId, slot, item.IsAccessory, _assets.ActiveManipulations)
+            : null;
+
+    /// <summary>Penumbra's EquipSlot name for the item's EQDP entry ("Body", "Ears", ...).</summary>
+    internal static bool TryEqdpSlot(EquipmentItem item, out string slot)
+    {
+        slot = "";
+        if (item.IsWeapon || item.IsBodyPart)
+            return false;
+        return PenumbraMeta.TryGetEquipSlot(SlotSuffix(item.Slot), out slot, out _);
     }
 
     /// <summary>Resolves the model path and material set id for an item, or throws with a useful message.</summary>
@@ -104,7 +160,16 @@ public sealed partial class AssetPathResolver
         var suffix = SlotSuffix(item.Slot);
         return RaceTable
             .Where(race => _assets.FileExists(EquipmentMdlPath(item, set, race.Code, suffix)))
-            .Select(race => new RaceVariant(race.Code, race.Label))
+            .Select(race =>
+            {
+                // A version whose own model a manipulation turned off shows
+                // its base race's model, as in game; say so in the label.
+                if (!IsModelDisabled(item, race.Code))
+                    return new RaceVariant(race.Code, race.Label);
+                var used = EffectiveModelRace(item, race.Code);
+                var usedLabel = RaceTable.FirstOrDefault(r => r.Code == used).Label ?? $"c{used}";
+                return new RaceVariant(race.Code, $"{race.Label} (uses {usedLabel})");
+            })
             .ToArray();
     }
 
@@ -188,11 +253,21 @@ public sealed partial class AssetPathResolver
         var preferred = PreferredRaceCode;
         if (preferred is not null)
         {
-            var candidate = EquipmentMdlPath(item, set, preferred, suffix);
+            // Same order the game uses: the race's own model unless it has
+            // none (or a manipulation turned it off), then its base race.
+            // Female races must never fall straight to the male model.
+            var used = EffectiveModelRace(item, preferred);
+            var candidate = EquipmentMdlPath(item, set, used, suffix);
             if (_assets.FileExists(candidate))
+            {
                 mdlPath = candidate;
+                if (used != preferred)
+                    _logger.LogInformation("c{Race} uses the c{Base} model for {Item}", preferred, used, set);
+            }
             else
+            {
                 _logger.LogWarning("No c{Race} model for {Item}; falling back to probe order", preferred, set);
+            }
         }
 
         if (mdlPath is null)

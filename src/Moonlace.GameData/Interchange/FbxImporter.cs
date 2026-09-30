@@ -11,9 +11,12 @@ namespace Moonlace.GameData.Interchange;
 /// <summary>
 /// Imports an FBX file as a replacement for an existing FFXIV model,
 /// mirroring <see cref="GltfImporter"/>: the original parsed model acts as
-/// the template, material slots are mapped by material name, skin weights
-/// are remapped through bone names onto the template's bone list, and
-/// per-mesh bone tables are extended as needed (up to the format's 64).
+/// the template, each mesh keeps the material slot of the template mesh it
+/// replaces (the file's own material assignments are ignored), skin weights
+/// are remapped through bone names onto the template's bone list (any rig
+/// works: bones the template lacks are added, see
+/// <see cref="BoneNameResolver"/>), and per-mesh bone tables are extended as
+/// needed (up to the format's 64).
 /// Mesh names follow the TexTools/Penumbra convention: only the trailing
 /// numbers matter ("chest 0.0", "foot 0.6", "mesh_2.1" are all mesh N part
 /// M; a bare trailing number is part 0), so such meshes are regrouped into
@@ -67,9 +70,7 @@ public static class FbxImporter
         if (triangleMeshes.Count == 0)
             throw new ModelImportException("The file contains no meshes.");
 
-        var boneIndexByName = new Dictionary<string, ushort>(StringComparer.Ordinal);
-        for (var i = 0; i < template.BoneNames.Count; i++)
-            boneIndexByName[template.BoneNames[i]] = (ushort)i;
+        var bones = new BoneNameResolver(template.BoneNames);
 
         var boneTables = template.BoneTables.Select(t => t.ToList()).ToList();
         if (boneTables.Count == 0)
@@ -108,17 +109,10 @@ public static class FbxImporter
         {
             var (templateMeshIndex, parts) = groups[gi];
             var firstMesh = (AiMesh*)parts[0].Mesh;
-            var groupMaterialName = MaterialName(scene, firstMesh->MMaterialIndex);
-            var groupLabel = groupMaterialName
-                ?? (firstMesh->MName.Length > 0 ? ReadString(firstMesh->MName) : $"mesh {gi}");
+            var groupLabel = firstMesh->MName.Length > 0 ? ReadString(firstMesh->MName) : $"mesh {gi}";
 
-            var meshNumberKnown = templateMeshIndex is { } tmi && tmi < template.Meshes.Count;
-            var templateMesh = meshNumberKnown
-                ? template.Meshes[templateMeshIndex!.Value]
-                : gi < template.Meshes.Count ? template.Meshes[gi] : template.Meshes[0];
-            var templateMaterial = meshNumberKnown ? templateMesh.MaterialIndex : (int?)null;
-            var materialIndex = ModelImportShared.ResolveMaterialIndex(
-                groupMaterialName, gi, groups.Count, template, groupLabel, templateMaterial);
+            var templateMesh = ModelImportShared.TemplateMeshFor(template, templateMeshIndex, gi);
+            var materialIndex = ModelImportShared.MaterialIndexFor(template, templateMesh);
             var boneTableIndex = Math.Min(templateMesh.BoneTableIndex, boneTables.Count - 1);
             var table = boneTables[boneTableIndex];
 
@@ -126,15 +120,7 @@ public static class FbxImporter
             foreach (var (meshPointer, transform, partNumber) in parts)
             {
                 var mesh = (AiMesh*)meshPointer;
-                var materialName = MaterialName(scene, mesh->MMaterialIndex);
-                var label = materialName ?? (mesh->MName.Length > 0 ? ReadString(mesh->MName) : groupLabel);
-                if (materialName is not null
-                    && ModelImportShared.ResolveMaterialIndex(
-                        materialName, gi, groups.Count, template, label, templateMaterial) != materialIndex)
-                    throw new ModelImportException(
-                        $"The parts of \"{groupLabel}\" use different materials; an FFXIV mesh has exactly one. " +
-                        "Give all parts of a mesh the same material.");
-
+                var label = mesh->MName.Length > 0 ? ReadString(mesh->MName) : groupLabel;
                 var (vertices, indices) = ImportMesh(mesh, transform, table, label);
                 importedParts.Add(new ModelImportShared.ImportedPart(vertices, indices, partNumber, label));
             }
@@ -145,7 +131,10 @@ public static class FbxImporter
                 materialIndex, template.MaterialNames[materialIndex], boneTableIndex));
         }
 
-        return new ModelImportResult(meshes, boneTables.Select(t => t.ToArray()).ToArray());
+        return new ModelImportResult(meshes, boneTables.Select(t => t.ToArray()).ToArray(), bones.BoneNames)
+        {
+            AddedBones = bones.AddedBones,
+        };
 
         (ParsedVertex[] Vertices, uint[] Indices) ImportMesh(
             AiMesh* mesh, Matrix4x4 transform, List<ushort> table, string label)
@@ -164,7 +153,7 @@ public static class FbxImporter
                 throw new ModelImportException(
                     $"\"{label}\" has no UV coordinates, which FFXIV materials require.");
 
-            var influences = CollectInfluences(mesh, count, boneIndexByName, label);
+            var influences = CollectInfluences(mesh, count, bones);
 
             Matrix4x4.Invert(transform, out var inverse);
             var normalTransform = Matrix4x4.Transpose(inverse);
@@ -204,9 +193,13 @@ public static class FbxImporter
         }
     }
 
-    /// <summary>Per-vertex bone influences (template bone index + weight) from the mesh's per-bone weight lists.</summary>
+    /// <summary>
+    /// Per-vertex bone influences (bone-list index + weight) from the mesh's
+    /// per-bone weight lists. Bones are resolved only when they carry
+    /// weight, so empty vertex groups of a kit's armature are ignored.
+    /// </summary>
     private static unsafe List<(ushort Bone, float Weight)>[] CollectInfluences(
-        AiMesh* mesh, int vertexCount, Dictionary<string, ushort> boneIndexByName, string label)
+        AiMesh* mesh, int vertexCount, BoneNameResolver bones)
     {
         var influences = new List<(ushort Bone, float Weight)>[vertexCount];
         for (var i = 0; i < vertexCount; i++)
@@ -215,17 +208,15 @@ public static class FbxImporter
         for (var b = 0; b < mesh->MNumBones; b++)
         {
             var bone = mesh->MBones[b];
-            var name = ReadString(bone->MName);
-            if (!boneIndexByName.TryGetValue(name, out var boneIndex))
-                throw new ModelImportException(
-                    $"The model is weighted to bone \"{name}\", which does not exist in the original " +
-                    "FFXIV model. Keep the vertex groups that came with the exported model.");
-
+            ushort? boneIndex = null;
             for (var w = 0; w < bone->MNumWeights; w++)
             {
                 var weight = bone->MWeights[w];
                 if (weight.MWeight > 0 && weight.MVertexId < vertexCount)
-                    influences[weight.MVertexId].Add((boneIndex, weight.MWeight));
+                {
+                    boneIndex ??= bones.Resolve(ReadString(bone->MName));
+                    influences[weight.MVertexId].Add((boneIndex.Value, weight.MWeight));
+                }
             }
         }
 
@@ -319,26 +310,6 @@ public static class FbxImporter
         }
 
         return 1f;
-    }
-
-    private static unsafe string? MaterialName(AiScene* scene, uint materialIndex)
-    {
-        if (materialIndex >= scene->MNumMaterials)
-            return null;
-
-        var material = scene->MMaterials[materialIndex];
-        for (var p = 0; p < material->MNumProperties; p++)
-        {
-            var property = material->MProperties[p];
-            if (property->MType != PropertyTypeInfo.String || ReadString(property->MKey) != "?mat.name")
-                continue;
-            var length = *(int*)property->MData;
-            if (length <= 0 || length > property->MDataLength - 4)
-                return null;
-            return Encoding.UTF8.GetString(property->MData + 4, length);
-        }
-
-        return null;
     }
 
     private static unsafe string ReadString(AssimpString value)

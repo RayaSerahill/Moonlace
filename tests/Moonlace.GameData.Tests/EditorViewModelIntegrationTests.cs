@@ -89,6 +89,61 @@ public sealed class EditorViewModelIntegrationTests : IDisposable
     }
 
     [SkippableFact]
+    public async Task TypedMaterialNameIsAppliedAsIs()
+    {
+        Skip.IfNot(TryInit());
+        var (editor, session, item) = CreateEditor("Hempen Camise");
+        await editor.SetItemAsync(item);
+
+        // What typing into the editable dropdown does, then Apply.
+        var row = editor.MeshAssignments[1];
+        row.MaterialName = "/bibo.mtrl";
+        Assert.True(row.IsCustomMaterial);
+        Assert.Equal(-1, row.SelectedMaterialIndex);
+        await editor.ApplyMeshAssignmentsCommand.ExecuteAsync(null);
+
+        Assert.Null(editor.ErrorText);
+        Assert.True(session.IsDirty);
+        // After the refresh the typed material is one of the model's own.
+        var refreshed = editor.MeshAssignments[1];
+        Assert.Equal("/bibo.mtrl", refreshed.MaterialName);
+        Assert.False(refreshed.IsCustomMaterial);
+        Assert.Contains("/bibo.mtrl", refreshed.MaterialNames);
+    }
+
+    [SkippableFact]
+    public async Task MaterialTabCreatesAndDeletesMaterials()
+    {
+        Skip.IfNot(TryInit());
+        var (editor, session, item) = CreateEditor("Hempen Camise");
+        await editor.SetItemAsync(item);
+        var before = editor.Materials.Select(m => m.Name).ToArray();
+        editor.SelectedMaterial = editor.Materials[0];
+
+        // New material: prefilled name, created as a copy, then selected.
+        editor.OpenNewMaterialCommand.Execute(null);
+        Assert.True(editor.IsCreatingMaterial);
+        var name = editor.NewMaterialName;
+        Assert.DoesNotContain(name, before);
+        await editor.CreateMaterialCommand.ExecuteAsync(null);
+        Assert.Null(editor.ErrorText);
+        Assert.False(editor.IsCreatingMaterial);
+        Assert.Contains(editor.Materials, m => m.Name == name);
+        Assert.Equal(name, editor.SelectedMaterial?.Name);
+        Assert.Contains(name, editor.MeshAssignments[0].MaterialNames);
+
+        // Delete it again after confirming.
+        editor.RequestDeleteMaterialCommand.Execute(null);
+        Assert.True(editor.IsConfirmingMaterialDelete);
+        Assert.Contains(name, editor.DeleteMaterialQuestion);
+        await editor.ConfirmDeleteMaterialCommand.ExecuteAsync(null);
+        Assert.Null(editor.ErrorText);
+        Assert.DoesNotContain(editor.Materials, m => m.Name == name);
+        Assert.Equal(before, editor.Materials.Select(m => m.Name));
+        Assert.True(session.IsDirty);
+    }
+
+    [SkippableFact]
     public async Task TextureSlotEditCommandStoresSessionMaterial()
     {
         Skip.IfNot(TryInit());

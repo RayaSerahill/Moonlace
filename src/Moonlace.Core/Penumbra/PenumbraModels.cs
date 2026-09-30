@@ -1,3 +1,5 @@
+using System.Text.Json.Nodes;
+
 namespace Moonlace.Core.Penumbra;
 
 /// <summary>A linking/parsing problem with a Penumbra mod folder, phrased for the UI.</summary>
@@ -19,6 +21,9 @@ public sealed class PenumbraOption
 
     /// <summary>Game path → path relative to the mod directory (normalized to '/'). Empty for no-op options ("Vanilla").</summary>
     public required IReadOnlyDictionary<string, string> Files { get; init; }
+
+    /// <summary>Metadata manipulations ({"Type", "Manipulation"} nodes) this option applies.</summary>
+    public IReadOnlyList<JsonObject> Manipulations { get; init; } = [];
 }
 
 /// <summary>
@@ -64,8 +69,11 @@ public sealed class PenumbraModInfo
 
     public required string Name { get; init; }
 
-    /// <summary>default_mod.json redirections (game path → mod-relative path, normalized to '/').</summary>
+    /// <summary>Default redirections (game path → mod-relative path, normalized to '/').</summary>
     public required IReadOnlyDictionary<string, string> DefaultFiles { get; init; }
+
+    /// <summary>Default metadata manipulations ({"Type", "Manipulation"} nodes).</summary>
+    public IReadOnlyList<JsonObject> DefaultManipulations { get; init; } = [];
 
     /// <summary>Groups in group-file order (display order); map precedence uses their Priority.</summary>
     public required IReadOnlyList<PenumbraGroup> Groups { get; init; }
@@ -128,11 +136,29 @@ public interface IPenumbraLinkService
     /// <summary>
     /// Writes edited bytes to the mod file behind a game path, backing the
     /// original up first. Paths the mod does not cover are added to the mod's
-    /// default_mod.json (that JSON is backed up too, so revert removes them).
+    /// default files: meta.json DefaultData for FileVersion 4+ mods (the only
+    /// place Penumbra reads them), default_mod.json for legacy ones. That
+    /// JSON is backed up too, so revert removes them.
     /// With an edit target set, edits are captured as that option's own files
     /// instead — the default files stay untouched.
     /// </summary>
     void WriteAsset(string gamePath, byte[] data);
+
+    /// <summary>
+    /// Manipulations in effect for the current selection: the defaults, then
+    /// the selected options' in Penumbra precedence (a later one targeting
+    /// the same entry wins).
+    /// </summary>
+    IReadOnlyList<JsonObject> ActiveManipulations { get; }
+
+    /// <summary>
+    /// Adds a metadata manipulation ({"Type", "Manipulation"} node) to the
+    /// mod, replacing one that targets the same entry: into the edit target
+    /// option when one is set, otherwise the default data (meta.json for
+    /// FileVersion 4+, default_mod.json for legacy mods). The mod JSON is
+    /// backed up first, so revert removes it again.
+    /// </summary>
+    void SetManipulation(JsonObject manipulation);
 
     // --- Authoring options and groups ---
 

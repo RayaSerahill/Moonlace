@@ -168,7 +168,7 @@ public sealed class FbxRoundTripTests : IDisposable
     }
 
     [Fact]
-    public void UnknownBoneNameIsRejectedWithAClearError()
+    public void UnknownBoneNamesAreAddedToTheBoneList()
     {
         var model = BuildSyntheticModel();
         var fbx = TempFile("bones.fbx");
@@ -181,8 +181,11 @@ public sealed class FbxRoundTripTests : IDisposable
             BoneNames = ["j_totally_different"],
             BoneTables = [[0]],
         };
-        var ex = Assert.Throws<ModelImportException>(() => FbxImporter.Import(fbx, template));
-        Assert.Contains("j_kosi", ex.Message);
+        // Rigs are not required to match the original skeleton: the
+        // weighted bones are appended after the template's own.
+        var import = FbxImporter.Import(fbx, template);
+        Assert.Equal(["j_totally_different", "j_kosi", "j_sebo_a"], import.BoneNames);
+        Assert.Equal(["j_kosi", "j_sebo_a"], import.AddedBones);
     }
 
     // --- real game data ---

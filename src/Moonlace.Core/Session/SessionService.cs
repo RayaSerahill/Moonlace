@@ -1,7 +1,9 @@
 using System.Globalization;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Microsoft.Extensions.Logging;
 using Moonlace.Core.Models;
+using Moonlace.Core.Penumbra;
 
 namespace Moonlace.Core.Session;
 
@@ -122,7 +124,7 @@ public sealed class SessionService : ISessionService
         get
         {
             lock (_lock)
-                return _manifest.Entries.Count > 0;
+                return _manifest.Entries.Count > 0 || _manifest.Manipulations.Count > 0;
         }
     }
 
@@ -133,6 +135,38 @@ public sealed class SessionService : ISessionService
             lock (_lock)
                 return _manifest.Entries.ToArray();
         }
+    }
+
+    public IReadOnlyList<JsonObject> Manipulations
+    {
+        get
+        {
+            lock (_lock)
+                return _manifest.Manipulations.Select(m => (JsonObject)m.DeepClone()).ToArray();
+        }
+    }
+
+    public void StoreManipulation(JsonObject manipulation)
+    {
+        lock (_lock)
+        {
+            if (_activeItem is null)
+                throw new InvalidOperationException("No active session; select an item first.");
+
+            var dir = ItemDir(_activeItem.RowId);
+            Directory.CreateDirectory(dir);
+
+            var key = ModManipulations.IdentityKey(manipulation);
+            _manifest.Manipulations.RemoveAll(m => ModManipulations.IdentityKey(m) == key);
+            _manifest.Manipulations.Add((JsonObject)manipulation.DeepClone());
+            _manifest.ItemRowId = _activeItem.RowId;
+            _manifest.ItemName = _activeItem.Name;
+            SaveManifest(dir);
+            TouchMetadata(SessionDir(_currentSessionId));
+            _logger.LogInformation("Session: stored manipulation {Key}", key);
+        }
+
+        SessionChanged?.Invoke();
     }
 
     public void ActivateForItem(EquipmentItem? item)

@@ -54,6 +54,10 @@ public partial class EditorViewModel : ViewModelBase
     [ObservableProperty]
     private string? _errorText;
 
+    /// <summary>A one-off note from the last model import (e.g. that it went to the base race's model).</summary>
+    [ObservableProperty]
+    private string? _importNoticeText;
+
     [ObservableProperty]
     private bool _sessionDirty;
 
@@ -113,7 +117,27 @@ public partial class EditorViewModel : ViewModelBase
     public ObservableCollection<MaterialViewModel> Materials { get; } = [];
 
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(DeleteMaterialQuestion))]
     private MaterialViewModel? _selectedMaterial;
+
+    /// <summary>The model's material list (names), for suggesting free names.</summary>
+    private System.Collections.Generic.IReadOnlyList<string> _modelMaterialNames = [];
+
+    /// <summary>True while the "new material" panel is open.</summary>
+    [ObservableProperty]
+    private bool _isCreatingMaterial;
+
+    /// <summary>Name for the material to create, prefilled with the next free one.</summary>
+    [ObservableProperty]
+    private string _newMaterialName = "";
+
+    /// <summary>True while asking to confirm removing the selected material.</summary>
+    [ObservableProperty]
+    private bool _isConfirmingMaterialDelete;
+
+    public string DeleteMaterialQuestion => SelectedMaterial is { } m
+        ? $"Remove {m.Name} from the model? Meshes using it move to the first remaining material."
+        : "";
 
     // --- Texture tab ---
 
@@ -184,6 +208,9 @@ public partial class EditorViewModel : ViewModelBase
         _session.ActivateForItem(item);
         HasItem = item is not null;
         ErrorText = null;
+        ImportNoticeText = null;
+        IsCreatingMaterial = false;
+        IsConfirmingMaterialDelete = false;
         IsConfirmingDiscard = false;
         IsNewVersionPanelOpen = false;
         if (item is not null)
@@ -346,6 +373,7 @@ public partial class EditorViewModel : ViewModelBase
             ModelModified = info.ModelModified;
 
             HasMultipleMaterials = info.MaterialNames.Count > 1;
+            _modelMaterialNames = info.MaterialNames;
             foreach (var mesh in info.Meshes)
                 MeshAssignments.Add(new MeshAssignmentViewModel(mesh, info.MaterialNames));
 
@@ -488,7 +516,9 @@ public partial class EditorViewModel : ViewModelBase
 
         await RunOperationAsync("Importing model…", async () =>
         {
-            await _editing.ImportModelAsync(_item, path);
+            ImportNoticeText = await _editing.ImportModelAsync(_item, path);
+            // The version labels may change ("Miqo'te ♀ (uses Midlander ♀)").
+            await LoadVersionsAsync(SelectedVersion?.Code);
             await RefreshAsync();
             NotifyAssetsChanged();
         });
@@ -501,7 +531,8 @@ public partial class EditorViewModel : ViewModelBase
             return;
         await RunOperationAsync("Reassigning materials…", async () =>
         {
-            await _editing.SetMeshMaterialsAsync(_item, MeshAssignments.Select(m => m.SelectedMaterialIndex).ToArray());
+            // By name, so typed third-party materials go through as-is.
+            await _editing.SetMeshMaterialsAsync(_item, MeshAssignments.Select(m => m.MaterialName).ToArray());
             await RefreshAsync();
             NotifyAssetsChanged();
         });
@@ -524,6 +555,83 @@ public partial class EditorViewModel : ViewModelBase
         await RunOperationAsync("Reassigning textures…", async () =>
         {
             await _editing.SetMaterialTexturesAsync(material.GamePath, material.BuildTexturePaths());
+            await RefreshAsync();
+            NotifyAssetsChanged();
+        });
+    }
+
+    [RelayCommand]
+    private void OpenNewMaterial()
+    {
+        if (SelectedMaterial is not { } source)
+            return;
+        NewMaterialName = ItemEditingService.SuggestMaterialName(source.Name, _modelMaterialNames.ToHashSet());
+        IsConfirmingMaterialDelete = false;
+        IsCreatingMaterial = true;
+    }
+
+    [RelayCommand]
+    private void CancelNewMaterial() => IsCreatingMaterial = false;
+
+    /// <summary>Creates the new material as a copy of the selected one and selects it.</summary>
+    [RelayCommand]
+    private async Task CreateMaterialAsync()
+    {
+        if (_item is null || SelectedMaterial is not { } source)
+            return;
+        var name = NewMaterialName;
+        IsCreatingMaterial = false;
+        await RunOperationAsync("Creating material…", async () =>
+        {
+            await _editing.CreateMaterialAsync(_item, name, source.Name);
+            await RefreshAsync();
+            var created = ItemEditingService.NormalizeMaterialName(name);
+            SelectedMaterial = Materials.FirstOrDefault(m => m.Name == created) ?? SelectedMaterial;
+            NotifyAssetsChanged();
+        });
+    }
+
+    [RelayCommand]
+    private void RequestDeleteMaterial()
+    {
+        if (SelectedMaterial is null)
+            return;
+        IsCreatingMaterial = false;
+        IsConfirmingMaterialDelete = true;
+    }
+
+    [RelayCommand]
+    private void CancelDeleteMaterial() => IsConfirmingMaterialDelete = false;
+
+    [RelayCommand]
+    private async Task ConfirmDeleteMaterialAsync()
+    {
+        if (_item is null || SelectedMaterial is not { } material)
+            return;
+        IsConfirmingMaterialDelete = false;
+        await RunOperationAsync("Removing material…", async () =>
+        {
+            await _editing.DeleteMaterialAsync(_item, material.Name);
+            await RefreshAsync();
+            NotifyAssetsChanged();
+        });
+    }
+
+    internal async Task ApplyMaterialShaderAsync(MaterialViewModel material)
+    {
+        await RunOperationAsync("Switching shader…", async () =>
+        {
+            await _editing.SetMaterialShaderAsync(material.GamePath, material.ShaderText);
+            await RefreshAsync();
+            NotifyAssetsChanged();
+        });
+    }
+
+    internal async Task AddDiffuseSlotAsync(MaterialViewModel material)
+    {
+        await RunOperationAsync("Adding diffuse slot…", async () =>
+        {
+            await _editing.AddDiffuseSlotAsync(material.GamePath, material.NewDiffusePath);
             await RefreshAsync();
             NotifyAssetsChanged();
         });

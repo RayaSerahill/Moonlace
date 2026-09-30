@@ -15,17 +15,38 @@ namespace Moonlace.GameData.Parsing;
 /// geometry, preserves each mesh's submesh partition and attribute masks
 /// (falling back to one covering submesh when the partition no longer fits
 /// the geometry), converts bone tables to the v5 encoding, and drops shape
-/// (morph) data.
+/// (morph) data. Bones the template does not know (an imported model rigged
+/// to a body kit's own skeleton) are appended to the bone list, and
+/// materials it does not know (a third-party mod's material typed into the
+/// Model tab) to the material list, with their names added after the
+/// existing strings so every old offset still holds.
 /// </summary>
 public static class MdlWriter
 {
     private const int Stream0Stride = 20; // position 12 + blend weights 4 + blend indices 4
     private const int Stream1Stride = 36; // normal 12 + tangent 4 + color 4 + uv 16
 
-    public static byte[] Write(ParsedModel template, IReadOnlyList<ParsedMesh> meshes, IReadOnlyList<ushort[]> boneTables)
+    /// <param name="boneNames">
+    /// The full bone list the bone tables index into. It must start with the
+    /// template's own bones; anything after them is appended as new bones.
+    /// Null keeps the template's list.
+    /// </param>
+    /// <param name="materialNames">
+    /// The full material list mesh material indices point into, in any order
+    /// and length (materials may be added or removed). Names the template
+    /// already has reuse their string; new ones are appended. Null keeps the
+    /// template's list.
+    /// </param>
+    public static byte[] Write(
+        ParsedModel template, IReadOnlyList<ParsedMesh> meshes, IReadOnlyList<ushort[]> boneTables,
+        IReadOnlyList<string>? boneNames = null, IReadOnlyList<string>? materialNames = null)
     {
         var edit = template.EditData
             ?? throw new InvalidOperationException("Template model was parsed without edit data.");
+        var (strings, stringCount, materialNameOffsets, boneNameOffsets) = AppendNames(
+            edit, template.MaterialNames, materialNames, template.BoneNames, boneNames);
+        if (meshes.Any(m => m.MaterialIndex < 0 || m.MaterialIndex >= materialNameOffsets.Length))
+            throw new ArgumentException("A mesh points at a material slot the model does not have.");
 
         if (meshes.Count == 0)
             throw new ArgumentException("Cannot write a model with no meshes.");
@@ -94,12 +115,14 @@ public static class MdlWriter
 
         // --- Runtime section ---
         var runtime = new MemoryStream();
-        WriteU16(runtime, edit.StringCount);
+        WriteU16(runtime, stringCount);
         WriteU16(runtime, 0);
-        WriteU32(runtime, (uint)edit.StringsRaw.Length);
-        runtime.Write(edit.StringsRaw);
+        WriteU32(runtime, (uint)strings.Length);
+        runtime.Write(strings);
 
-        WriteModelHeader(runtime, edit, radius, meshes.Count, submeshRecords.Count, boneTables.Count);
+        WriteModelHeader(
+            runtime, edit, radius, meshes.Count, submeshRecords.Count,
+            materialNameOffsets.Length, boneNameOffsets.Length, boneTables.Count);
         runtime.Write(edit.ElementIdsRaw);
 
         var totalIndices = meshes.Sum(m => m.Indices.Length);
@@ -121,9 +144,9 @@ public static class MdlWriter
             WriteU16(runtime, sub.BoneCount);
         }
 
-        foreach (var offset in edit.MaterialNameOffsets)
+        foreach (var offset in materialNameOffsets)
             WriteU32(runtime, offset);
-        foreach (var offset in edit.BoneNameOffsets)
+        foreach (var offset in boneNameOffsets)
             WriteU32(runtime, offset);
 
         // Bone tables, v5 encoding: 64 ushorts + u32 count.
@@ -140,7 +163,7 @@ public static class MdlWriter
 
         for (var box = 0; box < 4; box++)
             WriteBoundingBox(runtime, min, max);
-        for (var bone = 0; bone < edit.BoneNameOffsets.Length; bone++)
+        for (var bone = 0; bone < boneNameOffsets.Length; bone++)
             WriteBoundingBox(runtime, min, max);
 
         var runtimeBytes = runtime.ToArray();
@@ -155,7 +178,7 @@ public static class MdlWriter
         WriteU32(file, (uint)stackSize);
         WriteU32(file, (uint)runtimeBytes.Length);
         WriteU16(file, (ushort)meshes.Count); // vertex declaration count
-        WriteU16(file, (ushort)edit.MaterialNameOffsets.Length);
+        WriteU16(file, (ushort)materialNameOffsets.Length);
         for (var lod = 0; lod < 3; lod++)
             WriteU32(file, (uint)vertexStart);
         for (var lod = 0; lod < 3; lod++)
@@ -178,6 +201,80 @@ public static class MdlWriter
         return file.ToArray();
     }
 
+    /// <summary>
+    /// The string table plus material- and bone-name offsets: the material
+    /// list may be any list (names the template has reuse their strings), the
+    /// bone list must start with the template's bones. New names are appended. New names go right after
+    /// the existing strings (kept byte for byte, minus trailing padding),
+    /// padded back to 4-byte alignment.
+    /// </summary>
+    private static (byte[] Strings, ushort StringCount, uint[] MaterialNameOffsets, uint[] BoneNameOffsets) AppendNames(
+        MdlEditData edit,
+        IReadOnlyList<string> templateMaterials, IReadOnlyList<string>? materialNames,
+        IReadOnlyList<string> templateBones, IReadOnlyList<string>? boneNames)
+    {
+        // Materials: a template name reuses its offset, anything else is new.
+        var existingMaterialOffset = new Dictionary<string, uint>(StringComparer.Ordinal);
+        for (var i = 0; i < templateMaterials.Count && i < edit.MaterialNameOffsets.Length; i++)
+            existingMaterialOffset.TryAdd(templateMaterials[i], edit.MaterialNameOffsets[i]);
+        var materialList = materialNames ?? templateMaterials;
+        if (materialList.Count > ushort.MaxValue)
+            throw new ArgumentException("Too many materials for the MDL format.", nameof(materialNames));
+        var newMaterials = materialList.Where(n => !existingMaterialOffset.ContainsKey(n)).Distinct(StringComparer.Ordinal).ToArray();
+
+        var newBones = ExtraNames(templateBones, boneNames, "bone", nameof(boneNames));
+        if (newMaterials.Length == 0 && newBones.Count == 0)
+            return (edit.StringsRaw, edit.StringCount, materialList.Select(n => existingMaterialOffset[n]).ToArray(), edit.BoneNameOffsets);
+        if (edit.StringCount + newMaterials.Length + newBones.Count > ushort.MaxValue
+            || templateBones.Count + newBones.Count > ushort.MaxValue)
+            throw new ArgumentException("Too many names for the MDL format.");
+
+        // Drop the old alignment padding (keeping the last terminator) so the
+        // new names follow directly; readers that walk the table string by
+        // string (Lumina) would otherwise stop at the padding.
+        var kept = edit.StringsRaw.Length;
+        while (kept > 1 && edit.StringsRaw[kept - 1] == 0 && edit.StringsRaw[kept - 2] == 0)
+            kept--;
+        var lastReferenced = edit.AttributeNameOffsets
+            .Concat(edit.MaterialNameOffsets).Concat(edit.BoneNameOffsets)
+            .DefaultIfEmpty(0u).Max();
+        kept = Math.Max(kept, (int)Math.Min(lastReferenced + 1, (uint)edit.StringsRaw.Length));
+
+        var strings = new MemoryStream();
+        strings.Write(edit.StringsRaw, 0, kept);
+        var boneOffsets = new List<uint>(edit.BoneNameOffsets);
+        foreach (var name in newMaterials)
+            existingMaterialOffset[name] = AppendString(strings, name);
+        var materialOffsets = materialList.Select(n => existingMaterialOffset[n]).ToList();
+        foreach (var name in newBones)
+            boneOffsets.Add(AppendString(strings, name));
+
+        while (strings.Position % 4 != 0)
+            strings.WriteByte(0);
+
+        var added = newMaterials.Length + newBones.Count;
+        return (strings.ToArray(), (ushort)(edit.StringCount + added), [.. materialOffsets], [.. boneOffsets]);
+    }
+
+    /// <summary>The names past the template's own list; the list must start with the template's names.</summary>
+    private static IReadOnlyList<string> ExtraNames(
+        IReadOnlyList<string> template, IReadOnlyList<string>? full, string kind, string parameter)
+    {
+        if (full is null || full.Count == template.Count)
+            return [];
+        if (full.Count < template.Count || !full.Take(template.Count).SequenceEqual(template))
+            throw new ArgumentException($"The {kind} list must start with the template's own {kind}s.", parameter);
+        return full.Skip(template.Count).ToArray();
+    }
+
+    private static uint AppendString(MemoryStream strings, string value)
+    {
+        var offset = (uint)strings.Position;
+        strings.Write(System.Text.Encoding.UTF8.GetBytes(value));
+        strings.WriteByte(0);
+        return offset;
+    }
+
     private sealed class MeshRecord
     {
         public required ParsedMesh Mesh { get; init; }
@@ -193,14 +290,16 @@ public static class MdlWriter
         public int SubmeshCount { get; set; }
     }
 
-    private static void WriteModelHeader(MemoryStream s, MdlEditData edit, float radius, int meshCount, int submeshCount, int boneTableCount)
+    private static void WriteModelHeader(
+        MemoryStream s, MdlEditData edit, float radius, int meshCount, int submeshCount,
+        int materialCount, int boneCount, int boneTableCount)
     {
         WriteF32(s, radius);
         WriteU16(s, (ushort)meshCount);
         WriteU16(s, (ushort)edit.AttributeNameOffsets.Length);
         WriteU16(s, (ushort)submeshCount);
-        WriteU16(s, (ushort)edit.MaterialNameOffsets.Length);
-        WriteU16(s, (ushort)edit.BoneNameOffsets.Length);
+        WriteU16(s, (ushort)materialCount);
+        WriteU16(s, (ushort)boneCount);
         WriteU16(s, (ushort)boneTableCount);
         WriteU16(s, 0); // shapes
         WriteU16(s, 0);

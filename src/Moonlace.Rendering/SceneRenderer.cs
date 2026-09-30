@@ -259,7 +259,10 @@ public sealed class SceneRenderer : IDisposable
                     _ => Vector3.One,
                 },
                 AlphaCutout = source.ShaderPack != "skin.shpk",
-                UseVertexColor = source.ShaderPack != "skin.shpk",
+                // A fallback material (the model points at a material nobody
+                // supplies, e.g. a third-party mod's) renders plain white:
+                // gear vertex colors are mask data, not albedo.
+                UseVertexColor = source.GamePath.Length > 0 && source.ShaderPack != "skin.shpk",
                 ColorTableRows = rows,
                 CtDiffuse = new Vector3[MaxColorRows],
                 CtSpecular = new Vector3[MaxColorRows],

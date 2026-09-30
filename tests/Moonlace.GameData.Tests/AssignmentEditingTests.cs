@@ -89,6 +89,80 @@ public sealed class AssignmentEditingTests : IDisposable
     }
 
     [SkippableFact]
+    public async Task TypedThirdPartyMaterialIsWrittenAsIsAndRendersWhite()
+    {
+        Skip.IfNot(TryInit());
+        var (session, editing, builder, item) = CreateStack("Hempen Camise");
+        var info = await editing.GetItemInfoAsync(item);
+        var gearMaterial = info.MaterialNames[info.Meshes[0].MaterialIndex];
+
+        // Mesh 0 keeps its material, every other mesh points at a material
+        // only some other mod would provide. (Skin-pattern names such as
+        // /mt_c0201b0001_bibo.mtrl preview as the vanilla skin instead, see
+        // RealGameDataTests.BodyMaterialFallsBackToVanillaSkin.)
+        const string custom = "/bibo.mtrl";
+        var names = info.Meshes.Select((_, i) => i == 0 ? gearMaterial : custom).ToArray();
+        await editing.SetMeshMaterialsAsync(item, names);
+        Assert.True(session.IsDirty);
+
+        // The model now lists the typed names verbatim, appended after the originals.
+        var after = await editing.GetItemInfoAsync(item);
+        Assert.Equal(info.MaterialNames, after.MaterialNames.Take(info.MaterialNames.Count));
+        Assert.Equal(custom, after.MaterialNames[^1]);
+        Assert.Equal(gearMaterial, after.MaterialNames[after.Meshes[0].MaterialIndex]);
+        Assert.Equal(custom, after.MaterialNames[after.Meshes[1].MaterialIndex]);
+        // Nobody supplies it, so it is simply not in the editable list.
+        Assert.DoesNotContain(after.Materials, m => m.Name == custom);
+
+        // The viewport still loads; the unknown material is the white fallback.
+        var model = await builder.LoadAsync(item);
+        Assert.Equal("", model.Meshes[1].Material.GamePath);
+        Assert.NotEqual("", model.Meshes[0].Material.GamePath);
+
+        // Reusing a typed name does not add it twice.
+        await editing.SetMeshMaterialsAsync(item, names);
+        var again = await editing.GetItemInfoAsync(item);
+        Assert.Equal(after.MaterialNames, again.MaterialNames);
+
+        // Blank names are rejected before anything is written.
+        await Assert.ThrowsAsync<ArgumentException>(
+            () => editing.SetMeshMaterialsAsync(item, info.Meshes.Select(_ => " ").ToArray()));
+    }
+
+    [SkippableFact]
+    public void AppendedMaterialNamesAreReadableByLumina()
+    {
+        Skip.IfNot(TryInit());
+        const string path = "chara/equipment/e0001/model/c0101e0001_top.mdl";
+        var original = MdlParser.Parse(_service.Lumina.GetFile(path)!.Data);
+        var names = original.MaterialNames.Append("/bibo.mtrl").ToArray();
+        var meshes = original.Meshes
+            .Select((m, i) => new ParsedMesh
+            {
+                Vertices = m.Vertices,
+                Indices = m.Indices,
+                MaterialIndex = i == 0 ? names.Length - 1 : m.MaterialIndex,
+                MaterialName = i == 0 ? "/bibo.mtrl" : m.MaterialName,
+                BoneTableIndex = m.BoneTableIndex,
+                Submeshes = m.Submeshes,
+            })
+            .ToArray();
+
+        var written = MdlWriter.Write(original, meshes, original.BoneTables, materialNames: names);
+        var reparsed = MdlParser.Parse(written);
+        Assert.Equal(names, reparsed.MaterialNames);
+        Assert.Equal(original.BoneNames, reparsed.BoneNames);
+        Assert.Equal("/bibo.mtrl", reparsed.Meshes[0].MaterialName);
+
+        var tmp = Path.Combine(_tempRoot, "custom-material.mdl");
+        Directory.CreateDirectory(_tempRoot);
+        File.WriteAllBytes(tmp, written);
+        var lumina = _service.Lumina.GetFileFromDisk<Lumina.Data.Files.MdlFile>(tmp, path);
+        Assert.Equal(names.Length, lumina.FileHeader.MaterialCount);
+        Assert.Equal(names.Length, lumina.MaterialNameOffsets.Length);
+    }
+
+    [SkippableFact]
     public async Task MaterialTextureReassignmentFlowsToRenderer()
     {
         Skip.IfNot(TryInit());
@@ -160,5 +234,112 @@ public sealed class AssignmentEditingTests : IDisposable
         {
             File.Delete(tmp);
         }
+    }
+    [Theory]
+    [InlineData("/mt_c0101e0001_top_a.mtrl", "/mt_c0101e0001_top_d.mtrl")] // _b and _c taken
+    [InlineData("/mt_c0101e0001_top_c.mtrl", "/mt_c0101e0001_top_d.mtrl")]
+    [InlineData("/mt_c0101e0001_top_x.mtrl", "/mt_c0101e0001_top_y.mtrl")]
+    [InlineData("/bibo.mtrl", "/bibo_new.mtrl")]
+    public void NewMaterialNamesSkipTakenOnes(string source, string expected)
+        => Assert.Equal(expected, ItemEditingService.SuggestMaterialName(
+            source, new HashSet<string> { "/mt_c0101e0001_top_a.mtrl", "/mt_c0101e0001_top_b.mtrl", "/mt_c0101e0001_top_c.mtrl" }));
+
+    [Theory]
+    [InlineData("mt_x_b", "/mt_x_b.mtrl")]
+    [InlineData("/mt_x_b.mtrl", "/mt_x_b.mtrl")]
+    [InlineData("  mt_x_b.mtrl ", "/mt_x_b.mtrl")]
+    [InlineData("chara/common/x.mtrl", "chara/common/x.mtrl")]
+    public void MaterialNamesAreNormalizedToModelStyle(string typed, string expected)
+        => Assert.Equal(expected, ItemEditingService.NormalizeMaterialName(typed));
+
+    [SkippableFact]
+    public async Task CreatedMaterialIsACopyInTheModelList()
+    {
+        Skip.IfNot(TryInit());
+        var (session, editing, builder, item) = CreateStack("Hempen Camise");
+        var info = await editing.GetItemInfoAsync(item);
+        var source = info.MaterialNames[info.Meshes[0].MaterialIndex];
+        var sourceMaterial = info.Materials.Single(m => m.Name == source);
+        var name = ItemEditingService.SuggestMaterialName(source, info.MaterialNames.ToHashSet());
+
+        await editing.CreateMaterialAsync(item, name, source);
+
+        var after = await editing.GetItemInfoAsync(item);
+        Assert.Equal(info.MaterialNames.Append(name), after.MaterialNames);
+        var created = after.Materials.Single(m => m.Name == name);
+        Assert.Equal(sourceMaterial.ShaderPack, created.ShaderPack);
+        Assert.Equal(sourceMaterial.Textures.Select(t => t.GamePath), created.Textures.Select(t => t.GamePath));
+        Assert.Equal(Path.GetDirectoryName(sourceMaterial.GamePath), Path.GetDirectoryName(created.GamePath));
+        // No mesh moved.
+        Assert.Equal(info.Meshes.Select(m => m.MaterialIndex), after.Meshes.Select(m => m.MaterialIndex));
+        Assert.Contains(session.Entries, e => e.GamePath == created.GamePath && e.Kind == SessionAssetKind.Material);
+
+        await Assert.ThrowsAsync<ArgumentException>(() => editing.CreateMaterialAsync(item, name, source));
+        await builder.LoadAsync(item); // still renders
+    }
+
+    [SkippableFact]
+    public async Task DeletedMaterialLeavesTheListAndItsMeshesMove()
+    {
+        Skip.IfNot(TryInit());
+        var (_, editing, builder, item) = CreateStack("Hempen Camise");
+        var info = await editing.GetItemInfoAsync(item);
+        Assert.True(info.MaterialNames.Count >= 2, "test needs a multi-material model");
+        var removed = info.MaterialNames[0];
+        var users = info.Meshes.Count(m => m.MaterialIndex == 0);
+
+        var moved = await editing.DeleteMaterialAsync(item, removed);
+
+        Assert.Equal(users, moved);
+        var after = await editing.GetItemInfoAsync(item);
+        Assert.Equal(info.MaterialNames.Skip(1), after.MaterialNames);
+        Assert.DoesNotContain(after.Materials, m => m.Name == removed);
+        // Meshes on the other material still point at it by name.
+        for (var i = 0; i < info.Meshes.Count; i++)
+        {
+            var expected = info.Meshes[i].MaterialIndex == 0 ? after.MaterialNames[0] : info.MaterialNames[info.Meshes[i].MaterialIndex];
+            Assert.Equal(expected, after.MaterialNames[after.Meshes[i].MaterialIndex]);
+        }
+
+        await builder.LoadAsync(item);
+
+        // The last material cannot go.
+        while (after.MaterialNames.Count > 1)
+        {
+            await editing.DeleteMaterialAsync(item, after.MaterialNames[0]);
+            after = await editing.GetItemInfoAsync(item);
+        }
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => editing.DeleteMaterialAsync(item, after.MaterialNames[0]));
+    }
+
+    [SkippableFact]
+    public void WriterAcceptsAShortenedMaterialListThatLuminaReads()
+    {
+        Skip.IfNot(TryInit());
+        const string path = "chara/equipment/e0001/model/c0101e0001_top.mdl";
+        var original = MdlParser.Parse(_service.Lumina.GetFile(path)!.Data);
+        Skip.If(original.MaterialNames.Count < 2, "needs two materials");
+        var names = original.MaterialNames.Skip(1).ToArray();
+        var meshes = original.Meshes.Select(m => new ParsedMesh
+        {
+            Vertices = m.Vertices,
+            Indices = m.Indices,
+            MaterialIndex = 0,
+            MaterialName = names[0],
+            BoneTableIndex = m.BoneTableIndex,
+            Submeshes = m.Submeshes,
+        }).ToArray();
+
+        var written = MdlWriter.Write(original, meshes, original.BoneTables, materialNames: names);
+        var reparsed = MdlParser.Parse(written);
+        Assert.Equal(names, reparsed.MaterialNames);
+        Assert.All(reparsed.Meshes, m => Assert.Equal(names[0], m.MaterialName));
+
+        var tmp = Path.Combine(_tempRoot, "fewer-materials.mdl");
+        Directory.CreateDirectory(_tempRoot);
+        File.WriteAllBytes(tmp, written);
+        var lumina = _service.Lumina.GetFileFromDisk<Lumina.Data.Files.MdlFile>(tmp, path);
+        Assert.Equal(names.Length, lumina.FileHeader.MaterialCount);
     }
 }

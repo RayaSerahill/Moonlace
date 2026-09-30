@@ -139,7 +139,7 @@
                                         </StackPanel>
 
                                         <TextBlock Classes="dim" FontSize="12" TextWrapping="Wrap"
-                                                   Text="Export the model as GLTF or FBX to edit its meshes in Blender, then import the result. Keep the material names and vertex groups that come with the export." />
+                                                   Text="Export the model as GLTF or FBX to edit its meshes in Blender, then import the result. Any rig and any material names work: new bones are added, and each mesh keeps the material chosen below." />
                                         <StackPanel Orientation="Horizontal" Spacing="8">
                                             <SplitButton Content="Export GLTF…"
                                                          Command="{Binding Editor.ExportModelCommand}"
@@ -169,22 +169,31 @@
                                                 </SplitButton.Flyout>
                                             </SplitButton>
                                         </StackPanel>
+                                        <TextBlock Classes="dim" FontSize="12" TextWrapping="Wrap"
+                                                   Text="{Binding Editor.ImportNoticeText}"
+                                                   IsVisible="{Binding Editor.ImportNoticeText, Converter={x:Static ObjectConverters.IsNotNull}}" />
 
                                         <Rectangle Height="1" Fill="{StaticResource MoonBorderBrush}" Margin="0,4" />
 
                                         <TextBlock Text="Mesh groups" FontWeight="SemiBold" FontSize="13" />
                                         <TextBlock Classes="dim" FontSize="12" TextWrapping="Wrap"
-                                                   Text="Each mesh group can use any of the model's materials." />
+                                                   Text="Each mesh group can use any of the model's materials, or type any material path another mod provides (e.g. /bibo.mtrl). Typed paths are written as-is; the preview shows white until something supplies them." />
                                         <ItemsControl ItemsSource="{Binding Editor.MeshAssignments}">
                                             <ItemsControl.ItemTemplate>
                                                 <DataTemplate x:DataType="vm:MeshAssignmentViewModel">
                                                     <Grid ColumnDefinitions="130,*" Margin="0,3">
                                                         <TextBlock Grid.Column="0" Classes="dim" FontSize="12"
                                                                    Text="{Binding Label}" VerticalAlignment="Center" />
-                                                        <ComboBox Grid.Column="1" FontSize="12"
-                                                                  ItemsSource="{Binding MaterialNames}"
-                                                                  SelectedIndex="{Binding SelectedMaterialIndex}"
-                                                                  HorizontalAlignment="Stretch" />
+                                                        <StackPanel Grid.Column="1" Spacing="2">
+                                                            <ComboBox FontSize="12" IsEditable="True"
+                                                                      ItemsSource="{Binding MaterialNames}"
+                                                                      Text="{Binding MaterialName, Mode=TwoWay}"
+                                                                      PlaceholderText="/mt_….mtrl"
+                                                                      HorizontalAlignment="Stretch" />
+                                                            <TextBlock Classes="dim" FontSize="11"
+                                                                       IsVisible="{Binding IsCustomMaterial}"
+                                                                       Text="Custom material, added to the model on apply" />
+                                                        </StackPanel>
                                                     </Grid>
                                                 </DataTemplate>
                                             </ItemsControl.ItemTemplate>
@@ -198,7 +207,7 @@
 
                             <!-- ── MATERIAL TAB ── -->
                             <TabItem Header="Material" FontSize="13">
-                                <Grid RowDefinitions="Auto,*" Margin="4,4">
+                                <Grid RowDefinitions="Auto,Auto,Auto,Auto,*" Margin="4,4">
                                     <ListBox Grid.Row="0" MaxHeight="110" Margin="0,0,0,6"
                                              ItemsSource="{Binding Editor.Materials}"
                                              SelectedItem="{Binding Editor.SelectedMaterial}">
@@ -216,14 +225,69 @@
                                         </ListBox.ItemTemplate>
                                     </ListBox>
 
-                                    <ContentControl Grid.Row="1" Content="{Binding Editor.SelectedMaterial}">
+                                    <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="6">
+                                        <Button Content="New material…" FontSize="12"
+                                                ToolTip.Tip="Create a copy of the selected material under a new name"
+                                                Command="{Binding Editor.OpenNewMaterialCommand}"
+                                                IsEnabled="{Binding Editor.SelectedMaterial, Converter={x:Static ObjectConverters.IsNotNull}}" />
+                                        <Button Content="Delete material" FontSize="12"
+                                                ToolTip.Tip="Remove the selected material from the model"
+                                                Command="{Binding Editor.RequestDeleteMaterialCommand}"
+                                                IsEnabled="{Binding Editor.SelectedMaterial, Converter={x:Static ObjectConverters.IsNotNull}}" />
+                                    </StackPanel>
+
+                                    <StackPanel Grid.Row="2" Spacing="6" Margin="0,6,0,0">
+                                        <StackPanel Spacing="6" IsVisible="{Binding Editor.IsCreatingMaterial}">
+                                            <TextBlock Classes="dim" FontSize="12" TextWrapping="Wrap"
+                                                       Text="The new material starts as a copy of the selected one and is added to the model's material list. Assign meshes to it in the Model tab." />
+                                            <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="6">
+                                                <TextBox Grid.Column="0" FontSize="12" Text="{Binding Editor.NewMaterialName}" />
+                                                <Button Grid.Column="1" Classes="primary" Content="Create" FontSize="12"
+                                                        Command="{Binding Editor.CreateMaterialCommand}" />
+                                                <Button Grid.Column="2" Content="Cancel" FontSize="12"
+                                                        Command="{Binding Editor.CancelNewMaterialCommand}" />
+                                            </Grid>
+                                        </StackPanel>
+                                        <StackPanel Spacing="6" IsVisible="{Binding Editor.IsConfirmingMaterialDelete}">
+                                            <TextBlock FontSize="12" TextWrapping="Wrap" Text="{Binding Editor.DeleteMaterialQuestion}" />
+                                            <StackPanel Orientation="Horizontal" Spacing="6">
+                                                <Button Classes="primary" Content="Remove" FontSize="12"
+                                                        Command="{Binding Editor.ConfirmDeleteMaterialCommand}" />
+                                                <Button Content="Cancel" FontSize="12"
+                                                        Command="{Binding Editor.CancelDeleteMaterialCommand}" />
+                                            </StackPanel>
+                                        </StackPanel>
+                                    </StackPanel>
+
+                                    <Rectangle Grid.Row="3" Height="1" Fill="{StaticResource MoonBorderBrush}" Margin="0,8,0,4" />
+
+                                    <ContentControl Grid.Row="4" Content="{Binding Editor.SelectedMaterial}">
                                         <ContentControl.ContentTemplate>
                                             <DataTemplate x:DataType="vm:MaterialViewModel">
                                                 <ScrollViewer>
                                                     <StackPanel Spacing="10" Margin="2,4">
 
+                                                        <StackPanel Spacing="6">
+                                                            <TextBlock Text="Shader" FontWeight="SemiBold" FontSize="13" />
+                                                            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="6">
+                                                                <ComboBox Grid.Column="0" FontSize="12" IsEditable="True"
+                                                                          ItemsSource="{Binding KnownShaders}"
+                                                                          Text="{Binding ShaderText, Mode=TwoWay}"
+                                                                          HorizontalAlignment="Stretch" />
+                                                                <Button Grid.Column="1" Content="Apply shader" FontSize="12"
+                                                                        Command="{Binding ApplyShaderCommand}" />
+                                                            </Grid>
+                                                            <TextBlock Classes="dim" FontSize="11" TextWrapping="Wrap"
+                                                                       Text="Only the shader name changes; keys and textures stay as they are. characterlegacy → character also sets fields 3, 7 and 11 on every color table row so the model does not render black." />
+                                                        </StackPanel>
+
+                                                        <Rectangle Height="1" Fill="{StaticResource MoonBorderBrush}" Margin="0,2" />
+
                                                         <StackPanel Spacing="6" IsVisible="{Binding HasColorTable}">
                                                             <TextBlock Text="Color table" FontWeight="SemiBold" FontSize="13" />
+                                                            <TextBlock Classes="dim" FontSize="11" TextWrapping="Wrap"
+                                                                       IsVisible="{Binding IsCharacterShader}"
+                                                                       Text="character.shpk renders black unless fields 3 and 11 are 1 and field 7 is 0 on the rows in use. Switching from characterlegacy sets this on every row." />
                                                             <Grid ColumnDefinitions="120,*">
                                                                 <ListBox Grid.Column="0" Height="190"
                                                                          ItemsSource="{Binding Rows}" SelectedItem="{Binding SelectedRow}">
@@ -259,11 +323,15 @@
                                                                         <TextBox Grid.Row="2" Grid.Column="2" Text="{Binding EmissiveG}" FontSize="12" />
                                                                         <TextBox Grid.Row="2" Grid.Column="3" Text="{Binding EmissiveB}" FontSize="12" />
                                                                     </Grid>
-                                                                    <Grid ColumnDefinitions="64,*,84,*" ColumnSpacing="5">
-                                                                        <TextBlock Grid.Column="0" Classes="dim" Text="Gloss" FontSize="12" VerticalAlignment="Center" />
-                                                                        <TextBox Grid.Column="1" Text="{Binding Gloss}" FontSize="12" />
-                                                                        <TextBlock Grid.Column="2" Classes="dim" Text="Spec str." FontSize="12" VerticalAlignment="Center" Margin="6,0,0,0" />
-                                                                        <TextBox Grid.Column="3" Text="{Binding SpecularStrength}" FontSize="12" />
+                                                                    <Grid ColumnDefinitions="110,*" RowDefinitions="Auto,Auto,Auto" ColumnSpacing="5" RowSpacing="4">
+                                                                        <TextBlock Grid.Row="0" Grid.Column="0" Classes="dim" Text="Field 3 (gloss)" FontSize="12" VerticalAlignment="Center" />
+                                                                        <TextBox Grid.Row="0" Grid.Column="1" Text="{Binding Gloss}" FontSize="12" />
+                                                                        <TextBlock Grid.Row="1" Grid.Column="0" Classes="dim" Text="Field 7 (spec str.)" FontSize="12" VerticalAlignment="Center" />
+                                                                        <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding SpecularStrength}" FontSize="12" />
+                                                                        <TextBlock Grid.Row="2" Grid.Column="0" Classes="dim" Text="Field 11" FontSize="12" VerticalAlignment="Center"
+                                                                                   IsVisible="{Binding IsDawntrailRow}" />
+                                                                        <TextBox Grid.Row="2" Grid.Column="1" Text="{Binding EmissiveExtra}" FontSize="12"
+                                                                                 IsVisible="{Binding IsDawntrailRow}" />
                                                                     </Grid>
                                                                 </StackPanel>
                                                             </Grid>
@@ -289,6 +357,18 @@
                                                         </ItemsControl>
                                                         <Button Classes="primary" Content="Apply textures" FontSize="12"
                                                                 HorizontalAlignment="Left" Command="{Binding ApplyTexturesCommand}" />
+
+                                                        <StackPanel Spacing="6" IsVisible="{Binding CanAddDiffuseSlot}">
+                                                            <TextBlock Classes="dim" FontSize="12" TextWrapping="Wrap"
+                                                                       Text="This material has no diffuse slot. Add one, then import an image to that path in the Texture tab." />
+                                                            <Grid ColumnDefinitions="70,*" Margin="0,3">
+                                                                <TextBlock Grid.Column="0" Classes="dim" FontSize="12"
+                                                                           Text="Diffuse" VerticalAlignment="Center" />
+                                                                <TextBox Grid.Column="1" FontSize="11" Text="{Binding NewDiffusePath}" />
+                                                            </Grid>
+                                                            <Button Content="Add diffuse slot" FontSize="12"
+                                                                    HorizontalAlignment="Left" Command="{Binding AddDiffuseSlotCommand}" />
+                                                        </StackPanel>
                                                     </StackPanel>
                                                 </ScrollViewer>
                                             </DataTemplate>

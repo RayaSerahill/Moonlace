@@ -1,3 +1,4 @@
+using System.Text.Json.Nodes;
 using Moonlace.Core.Models;
 
 namespace Moonlace.Core.Session;
@@ -26,7 +27,7 @@ public interface ISessionService
     /// <summary>Switches the active session to the given item (loading any persisted state). Null deactivates.</summary>
     void ActivateForItem(EquipmentItem? item);
 
-    /// <summary>True when the active item has modifications in the current session.</summary>
+    /// <summary>True when the active item has modifications (files or manipulations) in the current session.</summary>
     bool IsDirty { get; }
 
     /// <summary>Modified assets of the active item in the current session.</summary>
@@ -40,6 +41,15 @@ public interface ISessionService
 
     /// <summary>Creates or replaces the session copy for a game path (copy-on-write write side).</summary>
     SessionEntry StoreAsset(string gamePath, SessionAssetKind kind, byte[] data);
+
+    /// <summary>Metadata manipulations of the active item ({"Type", "Manipulation"} nodes, copies).</summary>
+    IReadOnlyList<JsonObject> Manipulations { get; }
+
+    /// <summary>
+    /// Adds a metadata manipulation to the active item, replacing one that
+    /// targets the same entry (see <see cref="Penumbra.ModManipulations"/>).
+    /// </summary>
+    void StoreManipulation(JsonObject manipulation);
 
     /// <summary>Removes all session copies of the active item and restores the original assets.</summary>
     void DiscardActiveSession();
