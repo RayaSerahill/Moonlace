@@ -544,6 +544,65 @@ public sealed class DawntrailUpgradeTests : IDisposable
     }
 
     [Fact]
+    public async Task NormalVariantsInOtherOptionsEachGetTheirOwnIndexMap()
+    {
+        // Shaped like "L ⬦ Macaron": the material lives in a dye option, the
+        // normal it uses is swapped by a separate ruffles group.
+        var dir = Path.Combine(_root, "options-mod");
+        Directory.CreateDirectory(dir);
+        File.WriteAllBytes(Path.Combine(dir, "dye.mtrl"), BuildLegacyMaterial(withDye: false));
+        File.WriteAllBytes(Path.Combine(dir, "with_n.tex"), TexWriter.Write(1, 1, [128, 128, 255, 17]));
+        File.WriteAllBytes(Path.Combine(dir, "without_n.tex"), TexWriter.Write(1, 1, [128, 128, 0, 34]));
+
+        var meta = new
+        {
+            FileVersion = 4,
+            Name = "Option Normals",
+            Groups = new object[]
+            {
+                new
+                {
+                    Name = "Dye", Type = "Single",
+                    Options = new[] { new { Name = "White", Files = new Dictionary<string, string> { [MtrlGamePath] = "dye.mtrl" } } },
+                },
+                new
+                {
+                    Name = "Ruffles", Type = "Single",
+                    Options = new[]
+                    {
+                        new { Name = "With", Files = new Dictionary<string, string> { [NormalGamePath] = "with_n.tex" } },
+                        new { Name = "Without", Files = new Dictionary<string, string> { [NormalGamePath] = "without_n.tex" } },
+                    },
+                },
+            },
+        };
+        File.WriteAllText(Path.Combine(dir, "meta.json"), JsonSerializer.Serialize(meta));
+
+        var report = await CreateUpgrader().UpgradeAsync(dir);
+        Assert.Empty(report.Warnings);
+        Assert.Equal(1, report.MaterialsUpgraded);
+        Assert.Equal(2, report.NormalsConverted);
+        Assert.Equal(2, report.IndexTexturesCreated);
+
+        // Each variant got its own index map from its own row data and its own opacity in alpha.
+        byte[] Read(string file) => TexWriter.TryReadB8G8R8A8(File.ReadAllBytes(Path.Combine(dir, file)))!.Value.Rgba;
+        Assert.Equal([4, 0, 0, 255], Read("with_id.tex"));     // row 1 → pair 0, odd row
+        Assert.Equal([21, 255, 0, 255], Read("without_id.tex")); // row 2 → pair 1, even row
+        Assert.Equal(255, Read("with_n.tex")[3]);
+        Assert.Equal(0, Read("without_n.tex")[3]);
+
+        // The index switches together with its normal: registered in each
+        // ruffles option, not in the material's dye option.
+        var indexPath = NormalGamePath.Replace("_n.tex", "_id.tex");
+        var groups = JsonDocument.Parse(File.ReadAllText(Path.Combine(dir, "meta.json"))).RootElement.GetProperty("Groups");
+        JsonElement Files(int group, int option) =>
+            groups[group].GetProperty("Options")[option].GetProperty("Files");
+        Assert.False(Files(0, 0).TryGetProperty(indexPath, out _));
+        Assert.Equal("with_id.tex", Files(1, 0).GetProperty(indexPath).GetString());
+        Assert.Equal("without_id.tex", Files(1, 1).GetProperty(indexPath).GetString());
+    }
+
+    [Fact]
     public async Task UpgradesAWholeModAndRevertRestoresIt()
     {
         var dir = BuildMod();
