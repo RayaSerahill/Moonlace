@@ -26,8 +26,8 @@ public sealed class DawntrailUpgradeReport
     {
         if (!AnyChanges)
             return AlreadyCurrent > 0
-                ? $"Nothing to upgrade — {AlreadyCurrent} material{(AlreadyCurrent == 1 ? " is" : "s are")} already Dawntrail-ready."
-                : "Nothing to upgrade — the mod has no legacy gear materials.";
+                ? $"Nothing to upgrade: {AlreadyCurrent} material{(AlreadyCurrent == 1 ? " is" : "s are")} already Dawntrail-ready."
+                : "Nothing to upgrade, the mod has no legacy gear materials.";
 
         var parts = new List<string>
         {
