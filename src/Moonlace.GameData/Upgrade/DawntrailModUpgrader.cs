@@ -171,6 +171,11 @@ public sealed class DawntrailModUpgrader
             var maskPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             var warnedNormals = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
+            // Texture references of every mod material (after its upgrade) and
+            // the index maps created for them, checked once everything is done.
+            var materialTextures = new List<List<string>>();
+            var createdIndexes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
             foreach (var container in containers)
             {
                 foreach (var (gamePath, rel) in container.Files)
@@ -206,6 +211,9 @@ public sealed class DawntrailModUpgrader
                         continue;
                     }
 
+                    var textures = doc.Textures.Select(t => t.Path).ToList();
+                    materialTextures.Add(textures);
+
                     if (!DawntrailUpgrade.IsLegacyCharacterMaterial(doc))
                     {
                         if (doc.ShaderPack is "characterlegacy.shpk" or "characterglass.shpk"
@@ -233,6 +241,7 @@ public sealed class DawntrailModUpgrader
                         maskPaths.Add(result.MaskPath);
                     if (result.NormalPath is null || result.IndexPath is null)
                         continue;
+                    textures.Add(result.IndexPath);
                     if (combined.ContainsKey(result.NormalPath))
                         indexByNormal.TryAdd(result.NormalPath, result.IndexPath);
                     else if ((!_gameData.IsInitialized || !_gameData.Lumina.FileExists(result.IndexPath))
@@ -254,11 +263,14 @@ public sealed class DawntrailModUpgrader
                     ct.ThrowIfCancellationRequested();
                     if (maskPaths.Contains(gamePath))
                         ConvertMask(rel, Resolve, Backup, convertedTextures, report);
-                    if (indexByNormal.TryGetValue(gamePath, out var indexPath))
-                        CreateIndexAndFixNormal(root, singleFile, container, rel, indexPath, Resolve, backups,
-                            convertedTextures, report);
+                    if (indexByNormal.TryGetValue(gamePath, out var indexPath)
+                        && CreateIndexAndFixNormal(root, singleFile, container, rel, indexPath, Resolve, backups,
+                            convertedTextures, report))
+                        createdIndexes.Add(indexPath);
                 }
             }
+
+            ReportUnsuppliedTextures(materialTextures, combined, createdIndexes, report);
 
             _logger.LogInformation("Dawntrail upgrade of \"{Mod}\": {Summary}", info.Name, report.Summary());
             return report;
@@ -289,9 +301,10 @@ public sealed class DawntrailModUpgrader
 
     /// <summary>
     /// Generates the index map next to one mod normal, converts that normal,
-    /// and registers the index in the normal's own container.
+    /// and registers the index in the normal's own container. Returns whether
+    /// the index map exists for it.
     /// </summary>
-    private void CreateIndexAndFixNormal(
+    private bool CreateIndexAndFixNormal(
         string root, bool singleFile, Container container, string normalRel, string indexPath,
         Func<string, string?> resolve, List<ModBackupEntry> backups,
         HashSet<string> convertedTextures, DawntrailUpgradeReport report)
@@ -299,7 +312,7 @@ public sealed class DawntrailModUpgrader
         var indexRel = DawntrailUpgrade.DeriveIndexPath(normalRel);
         var indexFile = resolve(indexRel);
         if (indexFile is null)
-            return;
+            return false;
 
         if (convertedTextures.Add(normalRel))
         {
@@ -308,7 +321,7 @@ public sealed class DawntrailModUpgrader
             if (decoded is null)
             {
                 report.Warnings.Add($"Could not decode normal texture {normalRel}; no index texture was generated.");
-                return;
+                return false;
             }
 
             if (!File.Exists(indexFile))
@@ -328,8 +341,53 @@ public sealed class DawntrailModUpgrader
             report.NormalsConverted++;
         }
 
-        if (File.Exists(indexFile))
-            RegisterFile(root, singleFile, container, indexPath, indexRel, backups);
+        if (!File.Exists(indexFile))
+            return false;
+        RegisterFile(root, singleFile, container, indexPath, indexRel, backups);
+        return true;
+    }
+
+    /// <summary>
+    /// Warns about textures a mod material references that neither the mod
+    /// nor the game supplies. The game skips meshes whose material cannot
+    /// load its textures, so the item turns invisible in game.
+    /// </summary>
+    private void ReportUnsuppliedTextures(
+        List<List<string>> materialTextures, Dictionary<string, string> combined,
+        HashSet<string> createdIndexes, DawntrailUpgradeReport report)
+    {
+        // Without game data a vanilla reference cannot be told apart from a missing one.
+        if (!_gameData.IsInitialized)
+            return;
+
+        var users = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        foreach (var textures in materialTextures)
+        {
+            foreach (var texture in textures.Distinct(StringComparer.OrdinalIgnoreCase))
+            {
+                if (texture.Length == 0 || combined.ContainsKey(texture) || createdIndexes.Contains(texture)
+                    || GameFileExists(texture))
+                    continue;
+                users[texture] = users.GetValueOrDefault(texture) + 1;
+            }
+        }
+
+        foreach (var (texture, count) in users)
+            report.Warnings.Add(
+                $"{texture} is used by {count} material{(count == 1 ? "" : "s")} but neither the mod nor the game " +
+                "supplies it; meshes using it will not show in game.");
+    }
+
+    private bool GameFileExists(string gamePath)
+    {
+        try
+        {
+            return _gameData.Lumina.FileExists(gamePath);
+        }
+        catch (Exception)
+        {
+            return false;
+        }
     }
 
     /// <summary>Adds a game-path → file redirection to a container's JSON (backed up first).</summary>
