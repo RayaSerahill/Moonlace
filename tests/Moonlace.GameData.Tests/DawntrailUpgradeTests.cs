@@ -1,5 +1,7 @@
 using System.Buffers.Binary;
 using System.Text.Json;
+using Lumina.Data;
+using Lumina.Data.Structs;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moonlace.Core.Penumbra;
 using Moonlace.GameData.Parsing;
@@ -289,6 +291,80 @@ public sealed class DawntrailUpgradeTests : IDisposable
         BinaryPrimitives.WriteUInt32LittleEndian(span[(headerSize + 12)..], (uint)data.Length);
         data.CopyTo(span[(headerSize + 16)..]);
         return result;
+    }
+
+    /// <summary>
+    /// A SqPack type-4 texture entry laid out like TexTools writes them: the
+    /// .tex header stored raw, then one deflated block per mip. The last
+    /// block's header can overstate its decompressed size, as in "L ⬦
+    /// Macaron" (its 1×1 mips claim 8 bytes and inflate to 4).
+    /// </summary>
+    private static byte[] SqPackType4(byte[] tex, int[] mipSizes, int overstateLastBlock = 0)
+    {
+        const int texHeaderSize = 80;
+        var blocks = new List<byte[]>();
+        var mipOffset = texHeaderSize;
+        for (var i = 0; i < mipSizes.Length; i++)
+        {
+            var compressed = new MemoryStream();
+            using (var deflate = new System.IO.Compression.DeflateStream(
+                       compressed, System.IO.Compression.CompressionLevel.Optimal, leaveOpen: true))
+                deflate.Write(tex, mipOffset, mipSizes[i]);
+            mipOffset += mipSizes[i];
+
+            var claimed = mipSizes[i] + (i == mipSizes.Length - 1 ? overstateLastBlock : 0);
+            var block = new byte[(16 + (int)compressed.Length + 127) / 128 * 128];
+            BinaryPrimitives.WriteUInt32LittleEndian(block, 16);                                // block header size
+            BinaryPrimitives.WriteUInt32LittleEndian(block.AsSpan(8), (uint)compressed.Length); // compressed size
+            BinaryPrimitives.WriteUInt32LittleEndian(block.AsSpan(12), (uint)claimed);         // decompressed size
+            compressed.ToArray().CopyTo(block, 16);
+            blocks.Add(block);
+        }
+
+        var lodCount = mipSizes.Length;
+        var headerSize = (24 + lodCount * 22 + 127) / 128 * 128;
+        var header = new byte[headerSize];
+        var span = header.AsSpan();
+        BinaryPrimitives.WriteUInt32LittleEndian(span, (uint)headerSize);
+        BinaryPrimitives.WriteUInt32LittleEndian(span[4..], 4);                // FileType.Texture
+        BinaryPrimitives.WriteUInt32LittleEndian(span[8..], (uint)tex.Length); // raw size
+        BinaryPrimitives.WriteUInt32LittleEndian(span[20..], (uint)lodCount);
+        var compressedOffset = texHeaderSize;
+        for (var i = 0; i < lodCount; i++)
+        {
+            // LOD block: compressed offset, compressed size, decompressed size, first block, block count.
+            var lod = span[(24 + i * 20)..];
+            BinaryPrimitives.WriteUInt32LittleEndian(lod, (uint)compressedOffset);
+            BinaryPrimitives.WriteUInt32LittleEndian(lod[4..], (uint)blocks[i].Length);
+            BinaryPrimitives.WriteUInt32LittleEndian(lod[8..], (uint)mipSizes[i]);
+            BinaryPrimitives.WriteUInt32LittleEndian(lod[12..], (uint)i);
+            BinaryPrimitives.WriteUInt32LittleEndian(lod[16..], 1);
+            BinaryPrimitives.WriteUInt16LittleEndian(span[(24 + lodCount * 20 + i * 2)..], (ushort)blocks[i].Length);
+            compressedOffset += blocks[i].Length;
+        }
+
+        var result = new MemoryStream();
+        result.Write(header);
+        result.Write(tex, 0, texHeaderSize);
+        foreach (var block in blocks)
+            result.Write(block);
+        return result.ToArray();
+    }
+
+    [Fact]
+    public void TtmpdTextureEntriesSurviveAnOverstatedLastBlock()
+    {
+        var rgba = Enumerable.Range(0, 4 * 4 * 4).Select(i => (byte)(i * 3)).ToArray();
+        var tex = TexWriter.Write(4, 4, rgba);
+        var entry = SqPackType4(tex, [64, 16, 4], overstateLastBlock: 4);
+
+        using var mpd = new MemoryStream(entry);
+        using var sqpack = new SqPackStream(mpd, PlatformId.Win32);
+
+        // The fixture reproduces the real failure: Lumina trusts the block
+        // header and overruns its raw-size buffer.
+        Assert.ThrowsAny<Exception>(() => sqpack.ReadFile<FileResource>(0));
+        Assert.Equal(tex, TtmpdEntryReader.Read(mpd, sqpack, 0));
     }
 
     /// <summary>A minimal TexTools .meta blob holding a single GMP chunk (visor enabled).</summary>
