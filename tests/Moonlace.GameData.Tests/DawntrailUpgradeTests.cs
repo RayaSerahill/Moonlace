@@ -12,8 +12,9 @@ namespace Moonlace.GameData.Tests;
 /// <summary>
 /// Endwalker → Dawntrail upgrade: material surgery (verified through both
 /// Moonlace parsers), reference-exact texture math, and the whole-mod flow
-/// including backups and revert. Everything runs on fabricated files — no
-/// game installation involved.
+/// including backups and revert. Everything runs on fabricated files; only
+/// the missing-texture report reads the real game data (skipped without an
+/// installation), since it has to tell vanilla references from lost ones.
 /// </summary>
 public sealed class DawntrailUpgradeTests : IDisposable
 {
