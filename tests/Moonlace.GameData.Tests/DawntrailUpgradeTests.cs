@@ -602,6 +602,52 @@ public sealed class DawntrailUpgradeTests : IDisposable
         Assert.Equal("without_id.tex", Files(1, 1).GetProperty(indexPath).GetString());
     }
 
+    private static string? FindGameDir()
+    {
+        var env = Environment.GetEnvironmentVariable("MOONLACE_TEST_GAME_DIR");
+        if (env is not null && Directory.Exists(Path.Combine(env, "sqpack")))
+            return env;
+        const string local = "/mnt/games/pelit/installs/ffxiv/game";
+        return Directory.Exists(Path.Combine(local, "sqpack")) ? local : null;
+    }
+
+    [SkippableFact]
+    public async Task TexturesNothingSuppliesAreReported()
+    {
+        var gameDir = FindGameDir();
+        Skip.If(gameDir is null, "No FFXIV installation available.");
+        using var gameData = new LuminaGameDataService(NullLogger<LuminaGameDataService>.Instance);
+        await gameData.InitializeAsync(gameDir!);
+        var upgrader = new DawntrailModUpgrader(
+            new PenumbraLinkService(NullLogger<PenumbraLinkService>.Instance), gameData,
+            NullLogger<DawntrailModUpgrader>.Instance);
+
+        // The material uses a mask the mod lost and the game never had (e9999 is not a real set).
+        var dir = BuildMod();
+        File.Delete(Path.Combine(dir, "gear_m.tex"));
+        var meta = new
+        {
+            FileVersion = 4,
+            Name = "Lost Mask",
+            DefaultData = new
+            {
+                Files = new Dictionary<string, string>
+                {
+                    [MtrlGamePath] = "gear.mtrl",
+                    [NormalGamePath] = "gear_n.tex",
+                },
+            },
+        };
+        File.WriteAllText(Path.Combine(dir, "meta.json"), JsonSerializer.Serialize(meta));
+
+        var report = await upgrader.UpgradeAsync(dir);
+
+        Assert.Equal(1, report.MaterialsUpgraded);
+        var warning = Assert.Single(report.Warnings);
+        Assert.Contains(MaskGamePath, warning);
+        Assert.Contains("will not show in game", warning);
+    }
+
     [Fact]
     public async Task UpgradesAWholeModAndRevertRestoresIt()
     {
