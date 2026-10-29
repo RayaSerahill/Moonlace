@@ -471,6 +471,78 @@ public sealed class DawntrailUpgradeTests : IDisposable
         Assert.Equal("characterlegacy.shpk", MtrlParser.Parse(mtrlStream.ToArray()).ShaderPack);
     }
 
+    /// <summary>Writes a .ttmp2 modpack: TTMPL.mpl manifest + TTMPD.mpd data blob.</summary>
+    private static void WriteTtmp(string path, object manifest, byte[] mpd)
+    {
+        using var stream = File.Create(path);
+        using var zip = new System.IO.Compression.ZipArchive(stream, System.IO.Compression.ZipArchiveMode.Create);
+        using (var writer = new StreamWriter(zip.CreateEntry("TTMPL.mpl").Open()))
+            writer.Write(JsonSerializer.Serialize(manifest));
+        using (var data = zip.CreateEntry("TTMPD.mpd").Open())
+            data.Write(mpd);
+    }
+
+    [Fact]
+    public async Task TtmpTexturesWithOverstatedBlocksSurviveTheUpgrade()
+    {
+        // Normal and mask stored the way "L ⬦ Macaron" stores its big textures.
+        var normalTex = TexWriter.Write(2, 2, new byte[]
+        {
+            128, 128, 255, 17, 128, 128, 255, 17,
+            128, 128, 255, 34, 128, 128, 255, 0,
+        });
+        var maskTex = TexWriter.Write(2, 2, new byte[]
+        {
+            10, 20, 30, 255, 11, 21, 31, 255, 12, 22, 32, 255, 13, 23, 33, 255,
+        });
+
+        var mpd = new MemoryStream();
+        long mtrlOffset = mpd.Position;
+        mpd.Write(SqPackType2(BuildLegacyMaterial(withDye: false)));
+        long normalOffset = mpd.Position;
+        mpd.Write(SqPackType4(normalTex, [16, 4], overstateLastBlock: 4));
+        long maskOffset = mpd.Position;
+        mpd.Write(SqPackType4(maskTex, [16, 4], overstateLastBlock: 4));
+
+        var manifest = new
+        {
+            TTMPVersion = "1.3w",
+            Name = "Big TexTools Textures",
+            SimpleModsList = new object[]
+            {
+                new { Name = "Material", FullPath = MtrlGamePath, ModOffset = mtrlOffset },
+                new { Name = "Normal", FullPath = NormalGamePath, ModOffset = normalOffset },
+                new { Name = "Mask", FullPath = MaskGamePath, ModOffset = maskOffset },
+            },
+        };
+
+        Directory.CreateDirectory(_root);
+        var ttmpPath = Path.Combine(_root, "big-textures.ttmp2");
+        WriteTtmp(ttmpPath, manifest, mpd.ToArray());
+
+        var outputPmp = Path.Combine(_root, "big-textures (DT).pmp");
+        var report = await CreateUpgrader().UpgradeModpackAsync(ttmpPath, outputPmp);
+
+        Assert.Empty(report.Warnings);
+        Assert.Equal(1, report.MaterialsUpgraded);
+        Assert.Equal(1, report.IndexTexturesCreated);
+        Assert.Equal(1, report.NormalsConverted);
+        Assert.Equal(1, report.MasksConverted);
+
+        // Both textures made it into the package, converted.
+        using var pmp = System.IO.Compression.ZipFile.OpenRead(outputPmp);
+        byte[] Entry(string suffix)
+        {
+            using var stream = new MemoryStream();
+            pmp.Entries.Single(e => e.FullName.EndsWith(suffix, StringComparison.Ordinal)).Open().CopyTo(stream);
+            return stream.ToArray();
+        }
+
+        Assert.Equal([30, 20, 10, 255], TexWriter.TryReadB8G8R8A8(Entry("_m.tex"))!.Value.Rgba[..4]);
+        Assert.Equal(255, TexWriter.TryReadB8G8R8A8(Entry("_n.tex"))!.Value.Rgba[3]);
+        Assert.Equal([4, 0, 0, 255], TexWriter.TryReadB8G8R8A8(Entry("_id.tex"))!.Value.Rgba[..4]);
+    }
+
     [Fact]
     public async Task UpgradesAWholeModAndRevertRestoresIt()
     {
