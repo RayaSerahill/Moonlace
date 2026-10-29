@@ -13,7 +13,7 @@ public sealed class ModpackException(string message) : Exception(message);
 /// Reads and writes distributable modpacks for the Dawntrail upgrade:
 /// Penumbra .pmp files (a zip of the mod-folder layout) and .ttmp/.ttmp2
 /// files (TTMPL.mpl manifest + TTMPD.mpd, whose entries are
-/// SqPack-compressed blobs that Lumina's SqPackStream decompresses). Both
+/// SqPack-compressed blobs, see <see cref="TtmpdEntryReader"/>). Both
 /// extract into a plain Penumbra mod folder the upgrader can work on, which
 /// is then repackaged as a .pmp. TexTools .meta/.rgsp metadata blobs are
 /// translated into Penumbra manipulations on the way.
@@ -205,7 +205,7 @@ public static class ModpackFile
                             parsed = [];
                             try
                             {
-                                var blob = sqpack.ReadFile<FileResource>(entry.ModOffset).Data;
+                                var blob = TtmpdEntryReader.Read(mpdStream, sqpack, entry.ModOffset);
                                 parsed = TexToolsMetaParser.Parse(gamePath, blob, warnings);
                             }
                             catch (Exception ex)
@@ -233,7 +233,7 @@ public static class ModpackFile
                         byte[] data;
                         try
                         {
-                            data = sqpack.ReadFile<FileResource>(entry.ModOffset).Data;
+                            data = TtmpdEntryReader.Read(mpdStream, sqpack, entry.ModOffset);
                         }
                         catch (Exception ex)
                         {
