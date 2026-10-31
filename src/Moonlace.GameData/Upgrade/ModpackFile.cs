@@ -13,7 +13,7 @@ public sealed class ModpackException(string message) : Exception(message);
 /// Reads and writes distributable modpacks for the Dawntrail upgrade:
 /// Penumbra .pmp files (a zip of the mod-folder layout) and .ttmp/.ttmp2
 /// files (TTMPL.mpl manifest + TTMPD.mpd, whose entries are
-/// SqPack-compressed blobs that Lumina's SqPackStream decompresses). Both
+/// SqPack-compressed blobs, see <see cref="TtmpdEntryReader"/>). Both
 /// extract into a plain Penumbra mod folder the upgrader can work on, which
 /// is then repackaged as a .pmp. TexTools .meta/.rgsp metadata blobs are
 /// translated into Penumbra manipulations on the way.
@@ -63,7 +63,7 @@ public static class ModpackFile
             case ".pmp":
                 ZipFile.ExtractToDirectory(modpackPath, targetDir, overwriteFiles: true);
                 if (!File.Exists(Path.Combine(targetDir, "meta.json")))
-                    throw new ModpackException("This .pmp contains no meta.json — it is not a Penumbra mod package.");
+                    throw new ModpackException("This .pmp contains no meta.json, it is not a Penumbra mod package.");
                 break;
 
             case ".ttmp" or ".ttmp2":
@@ -165,9 +165,9 @@ public static class ModpackFile
     {
         using var zip = ZipFile.OpenRead(modpackPath);
         var mplEntry = zip.GetEntry("TTMPL.mpl")
-            ?? throw new ModpackException("TTMPL.mpl is missing — this is not a valid .ttmp modpack.");
+            ?? throw new ModpackException("TTMPL.mpl is missing, this is not a valid .ttmp modpack.");
         var mpdEntry = zip.GetEntry("TTMPD.mpd")
-            ?? throw new ModpackException("TTMPD.mpd is missing — this is not a valid .ttmp modpack.");
+            ?? throw new ModpackException("TTMPD.mpd is missing, this is not a valid .ttmp modpack.");
 
         TtmpManifest manifest;
         using (var reader = new StreamReader(mplEntry.Open()))
@@ -205,7 +205,7 @@ public static class ModpackFile
                             parsed = [];
                             try
                             {
-                                var blob = sqpack.ReadFile<FileResource>(entry.ModOffset).Data;
+                                var blob = TtmpdEntryReader.Read(mpdStream, sqpack, entry.ModOffset);
                                 parsed = TexToolsMetaParser.Parse(gamePath, blob, warnings);
                             }
                             catch (Exception ex)
@@ -233,7 +233,7 @@ public static class ModpackFile
                         byte[] data;
                         try
                         {
-                            data = sqpack.ReadFile<FileResource>(entry.ModOffset).Data;
+                            data = TtmpdEntryReader.Read(mpdStream, sqpack, entry.ModOffset);
                         }
                         catch (Exception ex)
                         {
@@ -347,7 +347,7 @@ public static class ModpackFile
         }
 
         if (entries.Count == 0)
-            throw new ModpackException("TTMPL.mpl could not be parsed — unsupported .ttmp modpack format.");
+            throw new ModpackException("TTMPL.mpl could not be parsed: unsupported .ttmp modpack format.");
         return new TtmpManifest { SimpleModsList = entries };
     }
 

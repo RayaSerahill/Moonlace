@@ -1,5 +1,7 @@
 using System.Buffers.Binary;
 using System.Text.Json;
+using Lumina.Data;
+using Lumina.Data.Structs;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moonlace.Core.Penumbra;
 using Moonlace.GameData.Parsing;
@@ -10,8 +12,9 @@ namespace Moonlace.GameData.Tests;
 /// <summary>
 /// Endwalker → Dawntrail upgrade: material surgery (verified through both
 /// Moonlace parsers), reference-exact texture math, and the whole-mod flow
-/// including backups and revert. Everything runs on fabricated files — no
-/// game installation involved.
+/// including backups and revert. Everything runs on fabricated files; only
+/// the missing-texture report reads the real game data (skipped without an
+/// installation), since it has to tell vanilla references from lost ones.
 /// </summary>
 public sealed class DawntrailUpgradeTests : IDisposable
 {
@@ -291,6 +294,80 @@ public sealed class DawntrailUpgradeTests : IDisposable
         return result;
     }
 
+    /// <summary>
+    /// A SqPack type-4 texture entry laid out like TexTools writes them: the
+    /// .tex header stored raw, then one deflated block per mip. The last
+    /// block's header can overstate its decompressed size, as in "L ⬦
+    /// Macaron" (its 1×1 mips claim 8 bytes and inflate to 4).
+    /// </summary>
+    private static byte[] SqPackType4(byte[] tex, int[] mipSizes, int overstateLastBlock = 0)
+    {
+        const int texHeaderSize = 80;
+        var blocks = new List<byte[]>();
+        var mipOffset = texHeaderSize;
+        for (var i = 0; i < mipSizes.Length; i++)
+        {
+            var compressed = new MemoryStream();
+            using (var deflate = new System.IO.Compression.DeflateStream(
+                       compressed, System.IO.Compression.CompressionLevel.Optimal, leaveOpen: true))
+                deflate.Write(tex, mipOffset, mipSizes[i]);
+            mipOffset += mipSizes[i];
+
+            var claimed = mipSizes[i] + (i == mipSizes.Length - 1 ? overstateLastBlock : 0);
+            var block = new byte[(16 + (int)compressed.Length + 127) / 128 * 128];
+            BinaryPrimitives.WriteUInt32LittleEndian(block, 16);                                // block header size
+            BinaryPrimitives.WriteUInt32LittleEndian(block.AsSpan(8), (uint)compressed.Length); // compressed size
+            BinaryPrimitives.WriteUInt32LittleEndian(block.AsSpan(12), (uint)claimed);         // decompressed size
+            compressed.ToArray().CopyTo(block, 16);
+            blocks.Add(block);
+        }
+
+        var lodCount = mipSizes.Length;
+        var headerSize = (24 + lodCount * 22 + 127) / 128 * 128;
+        var header = new byte[headerSize];
+        var span = header.AsSpan();
+        BinaryPrimitives.WriteUInt32LittleEndian(span, (uint)headerSize);
+        BinaryPrimitives.WriteUInt32LittleEndian(span[4..], 4);                // FileType.Texture
+        BinaryPrimitives.WriteUInt32LittleEndian(span[8..], (uint)tex.Length); // raw size
+        BinaryPrimitives.WriteUInt32LittleEndian(span[20..], (uint)lodCount);
+        var compressedOffset = texHeaderSize;
+        for (var i = 0; i < lodCount; i++)
+        {
+            // LOD block: compressed offset, compressed size, decompressed size, first block, block count.
+            var lod = span[(24 + i * 20)..];
+            BinaryPrimitives.WriteUInt32LittleEndian(lod, (uint)compressedOffset);
+            BinaryPrimitives.WriteUInt32LittleEndian(lod[4..], (uint)blocks[i].Length);
+            BinaryPrimitives.WriteUInt32LittleEndian(lod[8..], (uint)mipSizes[i]);
+            BinaryPrimitives.WriteUInt32LittleEndian(lod[12..], (uint)i);
+            BinaryPrimitives.WriteUInt32LittleEndian(lod[16..], 1);
+            BinaryPrimitives.WriteUInt16LittleEndian(span[(24 + lodCount * 20 + i * 2)..], (ushort)blocks[i].Length);
+            compressedOffset += blocks[i].Length;
+        }
+
+        var result = new MemoryStream();
+        result.Write(header);
+        result.Write(tex, 0, texHeaderSize);
+        foreach (var block in blocks)
+            result.Write(block);
+        return result.ToArray();
+    }
+
+    [Fact]
+    public void TtmpdTextureEntriesSurviveAnOverstatedLastBlock()
+    {
+        var rgba = Enumerable.Range(0, 4 * 4 * 4).Select(i => (byte)(i * 3)).ToArray();
+        var tex = TexWriter.Write(4, 4, rgba);
+        var entry = SqPackType4(tex, [64, 16, 4], overstateLastBlock: 4);
+
+        using var mpd = new MemoryStream(entry);
+        using var sqpack = new SqPackStream(mpd, PlatformId.Win32);
+
+        // The fixture reproduces the real failure: Lumina trusts the block
+        // header and overruns its raw-size buffer.
+        Assert.ThrowsAny<Exception>(() => sqpack.ReadFile<FileResource>(0));
+        Assert.Equal(tex, TtmpdEntryReader.Read(mpd, sqpack, 0));
+    }
+
     /// <summary>A minimal TexTools .meta blob holding a single GMP chunk (visor enabled).</summary>
     private static byte[] MetaBlobWithGmp(string targetPath)
     {
@@ -393,6 +470,183 @@ public sealed class DawntrailUpgradeTests : IDisposable
         using var mtrlStream = new MemoryStream();
         mtrlEntry.Open().CopyTo(mtrlStream);
         Assert.Equal("characterlegacy.shpk", MtrlParser.Parse(mtrlStream.ToArray()).ShaderPack);
+    }
+
+    /// <summary>Writes a .ttmp2 modpack: TTMPL.mpl manifest + TTMPD.mpd data blob.</summary>
+    private static void WriteTtmp(string path, object manifest, byte[] mpd)
+    {
+        using var stream = File.Create(path);
+        using var zip = new System.IO.Compression.ZipArchive(stream, System.IO.Compression.ZipArchiveMode.Create);
+        using (var writer = new StreamWriter(zip.CreateEntry("TTMPL.mpl").Open()))
+            writer.Write(JsonSerializer.Serialize(manifest));
+        using (var data = zip.CreateEntry("TTMPD.mpd").Open())
+            data.Write(mpd);
+    }
+
+    [Fact]
+    public async Task TtmpTexturesWithOverstatedBlocksSurviveTheUpgrade()
+    {
+        // Normal and mask stored the way "L ⬦ Macaron" stores its big textures.
+        var normalTex = TexWriter.Write(2, 2, new byte[]
+        {
+            128, 128, 255, 17, 128, 128, 255, 17,
+            128, 128, 255, 34, 128, 128, 255, 0,
+        });
+        var maskTex = TexWriter.Write(2, 2, new byte[]
+        {
+            10, 20, 30, 255, 11, 21, 31, 255, 12, 22, 32, 255, 13, 23, 33, 255,
+        });
+
+        var mpd = new MemoryStream();
+        long mtrlOffset = mpd.Position;
+        mpd.Write(SqPackType2(BuildLegacyMaterial(withDye: false)));
+        long normalOffset = mpd.Position;
+        mpd.Write(SqPackType4(normalTex, [16, 4], overstateLastBlock: 4));
+        long maskOffset = mpd.Position;
+        mpd.Write(SqPackType4(maskTex, [16, 4], overstateLastBlock: 4));
+
+        var manifest = new
+        {
+            TTMPVersion = "1.3w",
+            Name = "Big TexTools Textures",
+            SimpleModsList = new object[]
+            {
+                new { Name = "Material", FullPath = MtrlGamePath, ModOffset = mtrlOffset },
+                new { Name = "Normal", FullPath = NormalGamePath, ModOffset = normalOffset },
+                new { Name = "Mask", FullPath = MaskGamePath, ModOffset = maskOffset },
+            },
+        };
+
+        Directory.CreateDirectory(_root);
+        var ttmpPath = Path.Combine(_root, "big-textures.ttmp2");
+        WriteTtmp(ttmpPath, manifest, mpd.ToArray());
+
+        var outputPmp = Path.Combine(_root, "big-textures (DT).pmp");
+        var report = await CreateUpgrader().UpgradeModpackAsync(ttmpPath, outputPmp);
+
+        Assert.Empty(report.Warnings);
+        Assert.Equal(1, report.MaterialsUpgraded);
+        Assert.Equal(1, report.IndexTexturesCreated);
+        Assert.Equal(1, report.NormalsConverted);
+        Assert.Equal(1, report.MasksConverted);
+
+        // Both textures made it into the package, converted.
+        using var pmp = System.IO.Compression.ZipFile.OpenRead(outputPmp);
+        byte[] Entry(string suffix)
+        {
+            using var stream = new MemoryStream();
+            pmp.Entries.Single(e => e.FullName.EndsWith(suffix, StringComparison.Ordinal)).Open().CopyTo(stream);
+            return stream.ToArray();
+        }
+
+        Assert.Equal([30, 20, 10, 255], TexWriter.TryReadB8G8R8A8(Entry("_m.tex"))!.Value.Rgba[..4]);
+        Assert.Equal(255, TexWriter.TryReadB8G8R8A8(Entry("_n.tex"))!.Value.Rgba[3]);
+        Assert.Equal([4, 0, 0, 255], TexWriter.TryReadB8G8R8A8(Entry("_id.tex"))!.Value.Rgba[..4]);
+    }
+
+    [Fact]
+    public async Task NormalVariantsInOtherOptionsEachGetTheirOwnIndexMap()
+    {
+        // Shaped like "L ⬦ Macaron": the material lives in a dye option, the
+        // normal it uses is swapped by a separate ruffles group.
+        var dir = Path.Combine(_root, "options-mod");
+        Directory.CreateDirectory(dir);
+        File.WriteAllBytes(Path.Combine(dir, "dye.mtrl"), BuildLegacyMaterial(withDye: false));
+        File.WriteAllBytes(Path.Combine(dir, "with_n.tex"), TexWriter.Write(1, 1, [128, 128, 255, 17]));
+        File.WriteAllBytes(Path.Combine(dir, "without_n.tex"), TexWriter.Write(1, 1, [128, 128, 0, 34]));
+
+        var meta = new
+        {
+            FileVersion = 4,
+            Name = "Option Normals",
+            Groups = new object[]
+            {
+                new
+                {
+                    Name = "Dye", Type = "Single",
+                    Options = new[] { new { Name = "White", Files = new Dictionary<string, string> { [MtrlGamePath] = "dye.mtrl" } } },
+                },
+                new
+                {
+                    Name = "Ruffles", Type = "Single",
+                    Options = new[]
+                    {
+                        new { Name = "With", Files = new Dictionary<string, string> { [NormalGamePath] = "with_n.tex" } },
+                        new { Name = "Without", Files = new Dictionary<string, string> { [NormalGamePath] = "without_n.tex" } },
+                    },
+                },
+            },
+        };
+        File.WriteAllText(Path.Combine(dir, "meta.json"), JsonSerializer.Serialize(meta));
+
+        var report = await CreateUpgrader().UpgradeAsync(dir);
+        Assert.Empty(report.Warnings);
+        Assert.Equal(1, report.MaterialsUpgraded);
+        Assert.Equal(2, report.NormalsConverted);
+        Assert.Equal(2, report.IndexTexturesCreated);
+
+        // Each variant got its own index map from its own row data and its own opacity in alpha.
+        byte[] Read(string file) => TexWriter.TryReadB8G8R8A8(File.ReadAllBytes(Path.Combine(dir, file)))!.Value.Rgba;
+        Assert.Equal([4, 0, 0, 255], Read("with_id.tex"));     // row 1 → pair 0, odd row
+        Assert.Equal([21, 255, 0, 255], Read("without_id.tex")); // row 2 → pair 1, even row
+        Assert.Equal(255, Read("with_n.tex")[3]);
+        Assert.Equal(0, Read("without_n.tex")[3]);
+
+        // The index switches together with its normal: registered in each
+        // ruffles option, not in the material's dye option.
+        var indexPath = NormalGamePath.Replace("_n.tex", "_id.tex");
+        var groups = JsonDocument.Parse(File.ReadAllText(Path.Combine(dir, "meta.json"))).RootElement.GetProperty("Groups");
+        JsonElement Files(int group, int option) =>
+            groups[group].GetProperty("Options")[option].GetProperty("Files");
+        Assert.False(Files(0, 0).TryGetProperty(indexPath, out _));
+        Assert.Equal("with_id.tex", Files(1, 0).GetProperty(indexPath).GetString());
+        Assert.Equal("without_id.tex", Files(1, 1).GetProperty(indexPath).GetString());
+    }
+
+    private static string? FindGameDir()
+    {
+        var env = Environment.GetEnvironmentVariable("MOONLACE_TEST_GAME_DIR");
+        if (env is not null && Directory.Exists(Path.Combine(env, "sqpack")))
+            return env;
+        const string local = "/mnt/games/pelit/installs/ffxiv/game";
+        return Directory.Exists(Path.Combine(local, "sqpack")) ? local : null;
+    }
+
+    [SkippableFact]
+    public async Task TexturesNothingSuppliesAreReported()
+    {
+        var gameDir = FindGameDir();
+        Skip.If(gameDir is null, "No FFXIV installation available.");
+        using var gameData = new LuminaGameDataService(NullLogger<LuminaGameDataService>.Instance);
+        await gameData.InitializeAsync(gameDir!);
+        var upgrader = new DawntrailModUpgrader(
+            new PenumbraLinkService(NullLogger<PenumbraLinkService>.Instance), gameData,
+            NullLogger<DawntrailModUpgrader>.Instance);
+
+        // The material uses a mask the mod lost and the game never had (e9999 is not a real set).
+        var dir = BuildMod();
+        File.Delete(Path.Combine(dir, "gear_m.tex"));
+        var meta = new
+        {
+            FileVersion = 4,
+            Name = "Lost Mask",
+            DefaultData = new
+            {
+                Files = new Dictionary<string, string>
+                {
+                    [MtrlGamePath] = "gear.mtrl",
+                    [NormalGamePath] = "gear_n.tex",
+                },
+            },
+        };
+        File.WriteAllText(Path.Combine(dir, "meta.json"), JsonSerializer.Serialize(meta));
+
+        var report = await upgrader.UpgradeAsync(dir);
+
+        Assert.Equal(1, report.MaterialsUpgraded);
+        var warning = Assert.Single(report.Warnings);
+        Assert.Contains(MaskGamePath, warning);
+        Assert.Contains("will not show in game", warning);
     }
 
     [Fact]
